@@ -112,3 +112,66 @@ django-admin dumpdata [app_label[.ModelName] [app_label[.ModelName] ...]]
 #### showmigrations
 
 显示项目中的所有迁移文件及相关的迁移状态。
+
+#### sqlflush
+
+显示执行 flush 命令将会执行的 SQL 代码。
+
+#### sqlmigrate
+
+为指定的迁移文件展示其 SQL 代码。
+
+#### sqlsequencereset
+
+显示重置序列将会执行的 SQL 代码。
+
+sequences被某些数据库引擎用来获取自增字段的下一个可用序号。
+
+#### squashmigrations
+
+用于合并迁移文件，简化迁移历史。
+
+#### startapp
+
+创建 Django app 目录结构。
+
+#### startproject
+
+创建 Django 项目目录结构。
+
+#### test
+
+为所有已安装的 app 执行测试。
+
+#### testserver
+
+使用给定文件的数据运行 Django 开发服务器。
+
+### Commands provided by applications
+
+#### django.contrib.auth
+
+##### changepassword
+
+##### createsuperuser
+
+#### django.contrib.contenttypes
+
+##### remove_stable_contenttypes
+
+#### django.contrib.gis
+
+##### originspect
+
+#### django.contrib.sessions
+
+##### clearsessions
+
+#### django.contrib.staticfiles
+
+##### collectstatic
+
+##### findstatic
+
+
+
