@@ -118,3 +118,181 @@ urlpatterns = [
 
 ### Form
 
+#### CSRF
+
+Cross Site Requset Forgeries
+
+Django 默认启用了 CSRF 防护机制，保护应用免受 CSRF 攻击。以下是 Django 在 CSRF 防护方面的一些关键点：
+
+1. **中间件启用**：Django 默认启用了 `CsrfViewMiddleware`，它会拦截所有的 POST 请求，检查请求中是否包含有效的 CSRF token。
+
+2. **表单中的 CSRF Token**：Django 的模板系统提供了 `{% csrf_token %}` 标签，可以在每个表单中插入一个隐藏的 CSRF token。
+
+3. **视图装饰器**：对于某些视图，你可以通过装饰器显式地启用或禁用 CSRF 防护。例如：
+
+   ```python
+   from django.views.decorators.csrf import csrf_exempt
+   
+   @csrf_exempt
+   def my_view(request):
+       # 该视图不启用 CSRF 防护
+   ```
+
+4. **Cookie 配置**：Django 会在响应中设置 `CSRF_COOKIE`，并在用户请求中检查 `CSRF_TOKEN`，从而验证请求是否合法。
+
+#### HttpResponseRedirect
+
+应总是在表单的 Post 请求成功后返回一个 Http 重定向。
+
+### Generic Views
+
+Web 开发的通常任务：根据 URL 中传递的参数从数据库中获取数据，加载模板并返回经过呈现后的模板。
+
+#### ListView
+
+- 默认使用 `<app name>/<model name>_list.html`模板
+
+#### DetailView
+
+- 默认使用 `<app name>/<model name>_detail.html`模板
+
+#### Generic Views 获取数据
+
+每一个类视图都需要明确将操作哪一个类的模型数据，或者通过指定 `model` 属性来实现，或者通过定义 `get_queryset()` 类方法来实现
+
+### Automated Testing
+
+#### 创建测试以暴露 bug
+
+将添加测试代码至应用：`polls/test.py` ，测试系统将寻找所有名称以 test 开头的文件。
+
+```python
+import datetime
+
+from django.test import TestCase
+from django.utils import timezone
+
+from .models import Question
+
+
+class QuestionModelTests(TestCase):
+    def test_was_published_recently_with_future_question(self):
+        """
+        was_published_recently() returns False for questions whose pub_date
+        is in the future.
+        """
+        time = timezone.now() + datetime.timedelta(days=30)
+        future_question = Question(pub_date=time)
+        self.assertIs(future_question.was_published_recently(), False)
+```
+
+#### 运行测试
+
+```shell
+python manage.py test polls
+```
+
+将执行如下操作：
+
+1. 寻找 `polls` 应用中的测试文件
+2. 在测试文件中寻找 `django.test.Testcase` 的子类
+3. 生成测试用数据库
+4. 寻找以 `test` 开头的测试方法
+5. 执行测试方法
+
+#### 视图测试
+
+`setup_test_environment()`
+
+安装一个模板渲染器，以检查响应中的一些附加变量，例如响应的上下文变量 `response.context`，需要注意的是此方法不会生成一个测试数据库，而是会在当前数据库下进行。
+
+使用 `shell` 进行测试：
+
+```python
+from django.test.utils import setup_test_environment
+setup_test_environment()
+from django.test import Client
+# create an instance of the client for our use
+client = Client()
+```
+
+编写测试文件：
+
+```python
+def create_question(question_text, days):
+    """
+    Create a question with the given `question_text` and published the
+    given number of `days` offset to now (negative for questions published
+    in the past, positive for questions that have yet to be published).
+    """
+    time = timezone.now() + datetime.timedelta(days=days)
+    return Question.objects.create(question_text=question_text, pub_date=time)
+
+
+class QuestionIndexViewTests(TestCase):
+    def test_no_questions(self):
+        """
+        If no questions exist, an appropriate message is displayed.
+        """
+        response = self.client.get(reverse("polls:index"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No polls are available.")
+        self.assertQuerySetEqual(response.context["latest_question_list"], [])
+
+    def test_past_question(self):
+        """
+        Questions with a pub_date in the past are displayed on the
+        index page.
+        """
+        question = create_question(question_text="Past question.", days=-30)
+        response = self.client.get(reverse("polls:index"))
+        self.assertQuerySetEqual(
+            response.context["latest_question_list"],
+            [question],
+        )
+
+    def test_future_question(self):
+        """
+        Questions with a pub_date in the future aren't displayed on
+        the index page.
+        """
+        create_question(question_text="Future question.", days=30)
+        response = self.client.get(reverse("polls:index"))
+        self.assertContains(response, "No polls are available.")
+        self.assertQuerySetEqual(response.context["latest_question_list"], [])
+
+    def test_future_question_and_past_question(self):
+        """
+        Even if both past and future questions exist, only past questions
+        are displayed.
+        """
+        question = create_question(question_text="Past question.", days=-30)
+        create_question(question_text="Future question.", days=30)
+        response = self.client.get(reverse("polls:index"))
+        self.assertQuerySetEqual(
+            response.context["latest_question_list"],
+            [question],
+        )
+
+    def test_two_past_questions(self):
+        """
+        The questions index page may display multiple questions.
+        """
+        question1 = create_question(question_text="Past question 1.", days=-30)
+        question2 = create_question(question_text="Past question 2.", days=-5)
+        response = self.client.get(reverse("polls:index"))
+        self.assertQuerySetEqual(
+            response.context["latest_question_list"],
+            [question2, question1],
+        )
+```
+
+#### 测试思想
+
+- 任何要添加进软件的功能，都需要同时添加其测试
+- When testing, more is better
+- In testing redundancy is a *good* thing
+- 根据类或者视图来安排测试类
+- 不同的测试条件安排不同的测试方法
+- 测试名称直观描述其作用
+
