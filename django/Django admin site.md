@@ -177,4 +177,20 @@ class FlatPageAdmin(admin.ModelAdmin):
 
 ##### ModelAdmin.list_display
 
+参考[链接](https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#django.contrib.admin.ModelAdmin.list_display)
+
 在列表页显示字段的设置。若不设置此项，默认展示对象 `__str()__` 方法返回的结果。
+
+##### ModelAdmin.list_display_links
+
+使用这个字段控制 `list_display` 中哪些字段可以直接链接到对象的 `change` 页面。默认情况下，自动将 `list_display` 中的第一列链接。将此字段设置为 `None` 将不链接任何字段。
+
+##### ModelAdmin.list_editable
+
+设置可以直接在 `change list` 页面进行更改的字段。所设置的字段必须要在 `list_display` 中已设置且不能在 `list_display_links` 已设置
+
+##### ModelAdmin.list_filter
+
+设置一个 `list_filter` 来激活更改列表页面的右侧侧边栏的过滤器
+
+最简单的应用是设置需要过滤字段的列表或元组，关于更高级的功能选项配置，参考[链接](https://docs.djangoproject.com/en/5.1/ref/contrib/admin/filters/#modeladmin-list-filters)
