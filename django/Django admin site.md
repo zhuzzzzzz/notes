@@ -317,3 +317,266 @@ class PersonAdmin(admin.ModelAdmin):
         url = reverse("person-detail", kwargs={"slug": obj.slug})
         return "https://example.com" + url
 ```
+
+#### 自定义模板选项
+
+如何覆写或拓展由 ModelAdmin 使用的默认视图模板, 参考[链接](https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#custom-template-options)
+
+##### ModelAdmin.add_form_template
+
+##### ModelAdmin.change_for_template
+
+##### ModelAdmin.change_list_template
+
+##### ModelAdmin.delete_confirmation_template
+
+##### ModelAdmin.delete_selected_confirmation_template
+
+##### ModelAdmin.object_history_template
+
+##### ModelAdmin.popup_response_template
+
+#### ModelAdmin 类方法
+
+##### ModelAdmin.save_model(request, obj, form, change)
+
+save_model 方法接受四个参数, HttpRequest 对象, 模型实例对象, 模型表单实例, 以及标志当前是添加或修改操作的标志位. 
+
+```python
+from django.contrib import admin
+
+class ArticleAdmin(admin.ModelAdmin):
+    def save_model(self, request, obj, form, change):
+        obj.user = request.user
+        super().save_model(request, obj, form, change)
+```
+
+##### ModelAdmin.delete_model(request, obj)
+
+##### ModelAdmin.delete_queryset(requset, queryset)
+
+重写此方法以自定义 "删除已选择目标" 动作的删除过程
+
+##### ModelAdmin.save_formset(request,form, formset, change)
+
+##### ModelAdmin.get_ordering(request)
+
+此方法获取一个请求对象作为参数, 并返回类似于 `ordering` 属性的元组或列表
+
+```python
+class PersonAdmin(admin.ModelAdmin):
+    def get_ordering(self, request):
+        if request.user.is_superuser:
+            return ["name", "rank"]
+        else:
+            return ["name"]
+```
+
+##### ModelAdmin.get_search_results(request,queryset, search_item)
+
+```python
+class PersonAdmin(admin.ModelAdmin):
+    list_display = ["name", "age"]
+    search_fields = ["name"]
+
+    def get_search_results(self, request, queryset, search_term):
+        queryset, may_have_duplicates = super().get_search_results(
+            request,
+            queryset,
+            search_term,
+        )
+        try:
+            search_term_as_int = int(search_term)
+        except ValueError:
+            pass
+        else:
+            queryset |= self.model.objects.filter(age=search_term_as_int)
+        return queryset, may_have_duplicates
+```
+
+这个实现比 `search_fields` 设置为 `('name', 'age'')` 更具运行效率. 后者将使用数字字段的字符串匹配, 浙江导致产生类似于 `... OR UPPER("polls_choice"."votes"::text) = UPPER('4') 的数据库查询语句
+
+##### ModelAdmin.save_related(request, form, formsets, change)
+
+Note that at this point the parent object and its form have already been saved.
+
+##### ModelAdmin.get_autocomplete_fields(request)
+
+##### ModelAdmin.get_readonly_fields(request, obj=None)
+
+##### ModelAdmin.get_prepopulated_fields(request, obj=None)
+
+##### ModelAdmin.get_list_display(request)
+
+##### ModelAdmin.get_list_display_links(request, list_display)
+
+##### ModelAdmin.get_exclude(request, obj=None)
+
+##### ModelAdmin.get_fields(request, obj=None)
+
+##### ModelAdmin.get_fieldsets(request, obj=None)
+
+##### ModelAdmin.get_list_filter(request)
+
+##### ModelAdmin.get_list_select_related(request)
+
+##### ModelAdmin.get_search_fields(request)
+
+##### ModelAdmin.get_sortable_by(request)
+
+##### ModelAdmin.get_inline_instances(request, obj=None)
+
+#####  ModelAdmin.get_inlines(request, obj)
+
+##### ModelAdmin.get_urls()
+
+##### 等等
+
+### InlineModelAdmin 对象
+
+参考[链接](https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#inlinemodeladmin-objects)
+
+```python
+from django.contrib import admin
+
+class BookInline(admin.TabularInline):
+    model = Book
+
+class AuthorAdmin(admin.ModelAdmin):
+    inlines = [
+        BookInline,
+    ]
+```
+
+#### InlineModelAdmin 的属性选项
+
+许多属性选项与 `ModelAdmin` 一致, 并添加了一些自己的属性
+
+#### 重写 admin 模板
+
+参考[链接](https://docs.djangoproject.com/en/5.1/ref/contrib/admin/#set-up-your-projects-admin-template-directories)
+
+##### 设置项目的管理模板目录
+
+##### 选择重写还是替换一个 admin 模板
+
+##### 可以被重写的应用模板
+
+##### 根模板和登录模板
+
+### AdminSite 对象
+
+#### AdminSite 类
+
+Django 的一个管理站点即代表一个 `django.contrib.admin.sites.AdminSite` 实例, 默认情况下, 这些实例由 `django.contrib.admin.site` 创建, 用户可以将模型和管理模型注册到其中
+
+默认的管理站点可以被重写
+
+#### AdminSite 类属性
+
+#### AdminSite 类方法
+
+##### AdminSite.register(model_or_iterable, admin_class=None, **options)
+
+将指定的模型类(或类的列表)以及管理模型(默认为 `ModelAdmin` )注册到管理站点. `options` 中的关键字参数将作为管理模型的参数. 
+
+如果数据模型是抽象模型类, 将引发 `ImproperlyConfigured` 异常. 
+
+如果数据模型已被注册, 则引发 `django.contrib.admin.exceptions.AlreadyRegistered` 异常. 
+
+#### 将 AdminSite 实例钩子放置到 URLconf中
+
+将指定 url 指向 AdminSite.urls 即可, 例如将默认的 AdminSite 实例 `django.contrib.admin.site` 注册至 url `/admin/` 
+
+```python
+# urls.py
+from django.contrib import admin
+from django.urls import path
+
+urlpatterns = [
+    path("admin/", admin.site.urls),
+]
+```
+
+#### 自定义 AdminSite 类
+
+如果需要设置自定义的管理站点, 继承 AdminSite 类重写或添加任何代码, 然后创建此子类的对象实例, 将其和管理模型注册到对象模型上即可, 最后更新 URLconf 以指向新的管理站点
+
+```python
+from django.contrib import admin
+
+from .models import MyModel
+
+class MyAdminSite(admin.AdminSite):
+    site_header = "Monty Python administration"
+
+admin_site = MyAdminSite(name="myadmin")
+admin_site.register(MyModel)
+```
+
+```python
+from django.urls import path
+
+from myapp.admin import admin_site
+
+urlpatterns = [
+    path("myadmin/", admin_site.urls),
+]
+```
+
+#### 重写默认的管理站点
+
+通过设置自定义 AppConfig 的 `default_site` 属性来覆盖默认的 django.contrib.admin.site. 设置此项为某个 AdminSite 子类的导入路径或是一个将返回 AdminSite 类实例的可调用函数. 
+
+```python
+# myproject/admin.py
+from django.contrib import admin
+
+class MyAdminSite(admin.AdminSite): ...
+```
+
+```python
+# myproject/app.py
+from django.contrib.admin.apps import AdminConfig
+
+class MyAdminConfig(AdminConfig):
+    default_site = "myproject.admin.MyAdminSite"
+```
+
+```
+# myproject/settings.py
+INSTALLED_APPS = [
+    # ...
+    "myproject.apps.MyAdminConfig",  # replaces 'django.contrib.admin'
+    # ...
+]
+```
+
+#### 设置多个管理站点
+
+```python
+# urls.py
+from django.urls import path
+from myproject.admin import advanced_site, basic_site
+
+urlpatterns = [
+    path("basic-admin/", basic_site.urls),
+    path("advanced-admin/", advanced_site.urls),
+]
+```
+
+#### 为管理站点添加视图
+
+#### 添加密码重置特性
+
+### LogEntry 对象
+
+#### models.LogEntry 类
+
+#### LogEntry 类属性
+
+#### LogEntry 类方法
+
+### 管理站点的 URL 生成规则
+
+### display装饰器
