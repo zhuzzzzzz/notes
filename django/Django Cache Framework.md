@@ -314,6 +314,26 @@ HEAD 请求页面的响应头, 当指定 URL 相同的 GET 请求已被缓存, �
 
 若设置 `USE_TZ=True` 则缓存键也会包含当前时区.
 
+#### 中间件的顺序
+
+缓存中间件需要知道根据哪些请求头来区分不同的缓存, 并且会在返回响应时添加一些`vary` 头部设置. 
+
+- `UpdateCacheMiddleware` 
+
+- `SessionMiddleware` 添加 Cookie
+- `GZipMiddleware` 添加 Accept-Encoding
+- `LocaleMiddleware` 添加 Accept-Language
+- `FetchFromCacheMiddleware` 
+
+GPT介绍: 
+
+具体来说，`UpdateCacheMiddleware` 的工作流程是这样的：
+
+1. **检查缓存是否存在有效数据**：它会先检查请求是否已缓存。如果缓存存在且有效（如 HTTP 缓存头指示缓存有效），它会在后续的中间件阶段返回缓存响应（这部分由 `FetchFromCacheMiddleware` 处理）。
+2. **继续执行请求处理并更新缓存**：如果缓存没有命中，它并不会直接影响视图的执行，而是**为响应设置缓存标志**，确保视图返回的响应可以存入缓存。换句话说，`UpdateCacheMiddleware` 只是在请求阶段提前准备缓存，而不直接返回缓存的内容。
+3. **请求继续执行，直到视图返回**：请求经过其他中间件（如身份验证、CSRF 检查等），最终到达视图并生成响应。
+4. **缓存存储**：当响应返回时，`UpdateCacheMiddleware` 会将视图生成的响应缓存到指定的缓存后端。这是缓存存储的实际过程。这个操作会在视图返回响应之后执行，确保缓存响应。
+
 ### 视图缓存
 
 视图装饰器 `django.views.decorators.cache.cache_page`  , 只接受一个位置参数, 即缓存时间. 
@@ -414,6 +434,268 @@ True
 
 ### 缓存底层 API
 
-参考[链接](https://docs.djangoproject.com/en/5.1/topics/cache/#the-low-level-cache-api). 
+使用缓存底层 API 以实现更精细的缓存控制, 参考[链接](https://docs.djangoproject.com/en/5.1/topics/cache/#the-low-level-cache-api). 
 
-### 下游缓存
+#### 访问缓存
+
+`django.core.cache.caches` 
+
+访问在 `CACHES` 中配置的缓存后端. 在相同线程内对相同缓存后端的重复请求将返回相同的对象. 
+
+```python
+>>> from django.core.cache import caches
+>>> cache1 = caches["myalias"]
+>>> cache2 = caches["myalias"]
+>>> cache1 is cache2
+True
+```
+
+若命名的键值不存在, 将抛出`InvalidCacheBackendError` 异常
+
+**为了确保线程安全, 每一个线程都会返回一个缓存后端实例**
+
+`django.core.cache.cache`
+
+默认缓存的快捷访问方式. 
+
+```python
+>>> from django.core.cache import cache
+# This object is equivalent to caches['default'].
+```
+
+#### 基础用法
+
+```python
+# cache.set(key, value, timeout=DEFAULT_TIMEOUT, version=None)
+>>> cache.set("my_key", "hello, world!", 30)
+
+# cache.get(key, default=None, version=None)
+>>> cache.get("my_key")
+'hello, world!'
+
+# key should be a str, and value can be any picklable Python object.
+
+>>> # Wait 30 seconds for 'my_key' to expire...
+>>> cache.get("my_key")
+None
+
+# cache.add(key, value, timeout=DEFAULT_TIMEOUT, version=None)
+# To add a key only if it doesn’t already exist, use the add() method. It takes the same parameters as set(), but it will not attempt to update the cache if the key specified is already present
+# If you need to know whether add() stored a value in the cache, you can check the return value. It will return True if the value was stored, False otherwise.
+>>> cache.set("add_key", "Initial value")
+>>> cache.add("add_key", "New value")
+>>> cache.get("add_key")
+'Initial value'
+
+# cache.get_or_set(key, default, timeout=DEFAULT_TIMEOUT, version=None)
+>>> cache.get("my_new_key")  # returns None
+>>> cache.get_or_set("my_new_key", "my new value", 100)
+'my new value'
+# You can also pass any callable as a default value:
+>>> import datetime
+>>> cache.get_or_set("some-timestamp-key", datetime.datetime.now)
+datetime.datetime(2014, 12, 11, 0, 15, 49, 457920)
+
+# cache.get_many(keys, version=None)
+>>> cache.set("a", 1)
+>>> cache.set("b", 2)
+>>> cache.set("c", 3)
+>>> cache.get_many(["a", "b", "c"])
+{'a': 1, 'b': 2, 'c': 3}
+
+# cache.set_many(dict, timeout)
+>>> cache.set_many({"a": 1, "b": 2, "c": 3})
+>>> cache.get_many(["a", "b", "c"])
+{'a': 1, 'b': 2, 'c': 3}
+# Like cache.set(), set_many() takes an optional timeout parameter.
+# On supported backends (memcached), set_many() returns a list of keys that failed to be inserted.
+
+# cache.delete(key, version=None)
+>>> cache.delete("a")
+True
+
+# cache.delete_many(keys, version=None)
+>>> cache.delete_many(["a", "b", "c"])
+
+# remove everything from the cache, not just the keys set by your application
+>>> cache.clear()
+
+# cache.touch(key, timeout=DEFAULT_TIMEOUT, version=None)
+# sets a new expiration for a key. touch() returns True if the key was successfully touched, False otherwise
+>>> cache.touch("a", 10)
+True
+
+# cache.incr(key, delta=1, version=None)
+# cache.decr(key, delta=1, version=None)
+# incr()/decr() methods are not guaranteed to be atomic. On those backends that support atomic increment/decrement (most notably, the memcached backend), increment and decrement operations will be atomic. However, if the backend doesn’t natively provide an increment/decrement operation, it will be implemented using a two-step retrieve/update.
+
+# For caches that don’t implement close methods it is a no-op.
+# cache.close()
+```
+
+#### 缓存键前缀
+
+若在不同的服务器之间, 或是在生产环境和开发环境之间共享同一个缓存实例, 可能存在某个服务器的缓存数据被另一个服务器使用的情况, 若这两个服务器所提供的数据形式有差别, 这会导致系统问题的调试困难. 
+
+为了避免这一点, Django 提供了为缓存键增加前缀的功能. 当特定的缓存键被保存或被查询时, Django 将自动为其添加前缀, 根据 `KEY_PREFIX` . 通过配置每个 Django 实例的此参数, 以避免缓存键冲突. 
+
+#### 缓存的版本控制
+
+```python
+>>> # Set version 2 of a cache key
+>>> cache.set("my_key", "hello world!", version=2)
+>>> # Get the default version (assuming version=1)
+>>> cache.get("my_key")
+None
+>>> # Get version 2 of the same key
+>>> cache.get("my_key", version=2)
+'hello world!'
+
+# The version of a specific key can be incremented and decremented using the incr_version() and decr_version() methods.
+
+>>> # Increment the version of 'my_key'
+>>> cache.incr_version("my_key")
+>>> # The default version still isn't available
+>>> cache.get("my_key")
+None
+# Version 2 isn't available, either
+>>> cache.get("my_key", version=2)
+None
+>>> # But version 3 *is* available
+>>> cache.get("my_key", version=3)
+'hello world!'
+```
+
+#### 缓存键生成
+
+默认的缓存键生成方式
+
+```python
+def make_key(key, key_prefix, version):
+    return "%s:%s:%s" % (key_prefix, version, key)
+```
+
+`KEY_FUNCTION` 可以定义按如上规则实现自定义缓存键生成函数的默认路径. 
+
+#### 缓存键警告
+
+对于 Memcached 来说, 作为一个使用最广泛的生产环境缓存后端, 其不允许缓存键的长度超过 250 字符或包含空格和控制字符, 使用这样的缓存键将产生异常. 为了方便缓存代码的移植, 当使用这样的键时, 其他内置的缓存后端仅会产生一个警告信息.
+
+若你正在使用的生产环境缓存后端 (a custom backend, or one of the non-memcached built-in backends)能够接受范围更广泛的键时, 你可以通过如下设置来静默 `CacheKeyWarning` . 
+
+```python
+# in APP management module.
+import warnings
+
+from django.core.cache import CacheKeyWarning
+
+warnings.simplefilter("ignore", CacheKeyWarning)
+```
+
+如果想要为内置的后端提供自定义的键检查逻辑, 可以通过继承缓存后端的方式, 仅重写其 `validate_key` 方法. 
+
+```python
+from django.core.cache.backends.locmem import LocMemCache
+
+class CustomLocMemCache(LocMemCache):
+    def validate_key(self, key):
+        """Custom validation, raising exceptions or warnings as needed."""
+        ...
+```
+
+### 控制下游缓存
+
+HTTP 协议提供了相关的可配置协议头, 以帮助上游控制下游的缓存机制. 
+
+#### Vary 请求头
+
+Vary 请求头定义了缓存机制在构建缓存键时应该将哪些请求头也考虑在内. 
+
+默认情况下, Django 的缓存系统使用完整的 URL 作为缓存键. 这意味着对于同一个 URL 的请求，无论请求头中用户代理（如 Cookie、语言、User-Agent）等是否不同，都会返回相同的缓存内容。但如果页面的输出内容会因某些请求头（如 Cookie、语言、User-Agent 等）而有所不同，就需要使用 `Vary` 响应头，来告诉缓存机制页面内容依赖于这些请求头，从而确保返回正确的缓存版本。
+
+使用 `django.views.decorators.vary.vary_on_headers()` 视图装饰器设置 vary 请求头. 
+
+```python
+from django.views.decorators.vary import vary_on_headers
+
+# 缓存机制将为不同的user-agent分别创建缓存
+@vary_on_headers("User-Agent")
+def my_view(request): ...
+
+@vary_on_headers("User-Agent", "Cookie")
+def my_view(request): ...
+```
+
+```python
+from django.views.decorators.vary import vary_on_headers
+from django.views.decorators.vary import vary_on_cookie
+
+@vary_on_cookie
+def my_view(request): ...
+
+@vary_on_headers("Cookie")
+def my_view(request): ...
+```
+
+也可使用函数来添加 vary 响应头: 
+
+```python
+from django.shortcuts import render
+from django.utils.cache import patch_vary_headers
+
+def my_view(request):
+    ...
+    response = render(request, "template_name", context)
+    patch_vary_headers(response, ["Cookie"])
+    return response
+```
+
+#### 使用其他头部控制缓存
+
+缓存的另一个重要问题是数据的隐私性, 即缓存数据应该被缓存在下游的哪一层中(供应商还是在自己的浏览器中). 
+
+当需要让缓存页变成私有的: 
+
+```python
+from django.views.decorators.cache import cache_control
+
+@cache_control(private=True)
+def my_view(request): ...
+```
+
+根据程序执行逻辑选择使用公有或私有: 
+
+```python
+from django.views.decorators.cache import patch_cache_control
+from django.views.decorators.vary import vary_on_cookie
+
+@vary_on_cookie
+def list_blog_entries_view(request):
+    if request.user.is_anonymous:
+        response = render_only_public_entries()
+        patch_cache_control(response, public=True)
+    else:
+        response = render_private_and_public_entries(request.user)
+        patch_cache_control(response, private=True)
+
+    return response
+```
+
+即使不使用 Django 的缓存系统, 也可以控制下游缓存. 例如: 
+
+```python
+from django.views.decorators.cache import cache_control
+
+@cache_control(max_age=3600)
+def my_view(request): ...
+```
+
+```python
+from django.views.decorators.cache import never_cache
+
+@never_cache
+def myview(request): ...
+```
+
+
+
