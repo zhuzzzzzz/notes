@@ -419,5 +419,127 @@ Jump directly to <a href="{{ link }}">{{ title }}</a>.
 
 # call that custom tag: 
 {% jump_link %}
+
+# inclusion_tag functions may accept any number of positional or keyword arguments. For example:
+@register.inclusion_tag("my_template.html")
+def my_tag(a, b, *args, **kwargs):
+    warning = kwargs["warning"]
+    profile = kwargs["profile"]
+    ...
+    return ...
+
+{% my_tag 123 "abcd" book.title warning=message|lower profile=user.profile %}
 ```
 
+### 创建底层自定义标签
+
+#### 模板系统的工作流程
+
+模板系统的工作原理分两步, 编译和呈现, 为了定义个性化的模板标签, 你可以指定编译具体实现及呈现如何具体实现. 
+
+当 Django 编译一个模板时, 它将原始模板文本拆分为多个 `nodes`. 每一个 `node`(节点) 是一个 `django.template.Node` 实例并拥有 `render()` 方法. 一个经过编译的模板是由 `Node` 对象形成的列表, 当对其调用 `render()` 方法时, 模板将在给定的上下文中, 对列表中的每一个 `Node` 分别调用 `render()` 方法, 结果将拼接在一起以形成模板的输出. 
+
+因此, 要定义个性化的模板标签, 需要指定原始模板标签如何转化为节点(即编译功能), 以及实现节点的呈现函数. 
+
+#### 实现编译函数
+
+模板解析器对遇到的每个模板标签, 都会调用一个 Python 函数, 并将标签内容和解释器对象作为参数传入, 这个函数负责处理标签内容并返回一个节点实例. 
+
+**通过举例来实现一个模板标签:** 
+
+```html
+<p>The time is {% current_time "%Y-%m-%d %I:%M %p" %}.</p>
+```
+
+**此函数的解析器应该获取参数并创建一个节点对象:**
+
+```python
+from django import template
+
+def do_current_time(parser, token):
+    try:
+        # split_contents() knows not to split quoted strings.
+        tag_name, format_string = token.split_contents()
+    except ValueError:
+        raise template.TemplateSyntaxError(
+            "%r tag requires a single argument" % token.contents.split()[0]
+        )
+    if not (format_string[0] == format_string[-1] and format_string[0] in ('"', "'")):
+        raise template.TemplateSyntaxError(
+            "%r tag's argument should be in quotes" % tag_name
+        )
+    return CurrentTimeNode(format_string[1:-1])
+```
+
+**注:** 
+
+- `parser` 是模板解释器对象, 在这个例子中我们没有用到它
+- `token.contents` 是标签的原始内容. 在我们的例子中, 即 'current_time "%Y-%m-%d %I:%M:%p"'
+- `token.split_contents()` 方法以空格为分隔符拆分字符串, 但会保留引号的结构; `token.contents.split()` 则会将所有空格都作为分隔符拆分字符串. 
+- 这个函数将对语法错误抛出 `django.template.TemplateSyntaxError` 并给出帮助信息 
+- 在异常中使用 `tag_name` 变量, 而不是硬编码标签名称. 
+- 此例中, 函数返回一个 `CurrentTimeNode` 对象, 并传递所有此标签需要携带的信息(即输入的参数字符串). 在此例中为 "**%Y-%m-%d** **%I:%M** **%p**", 其中头部和尾部的字符串符号被去掉了. 
+
+#### 编写渲染器
+
+第二步即编写自定义标签, 以定义 `Node` 子类并实现其 `render()` 方法. 接着前文的例子, 我们需要定义 `CurrentTimeNode`
+
+```python
+import datetime
+from django import template
+
+class CurrentTimeNode(template.Node):
+    def __init__(self, format_string):
+        self.format_string = format_string
+
+    def render(self, context):
+        return datetime.datetime.now().strftime(self.format_string)
+```
+
+**注:** 
+
+- 在生产环境中, `render()` 方法调用失败时应静默. 在一些调试环境下可以抛出异常以方便调试. 
+
+#### 关于自动转义
+
+除 `simple_tag()` 之外, 所有的模板标签都不会经过自动转义过滤器处理. 
+
+若 `render()` 方法中会将结果存储进上下文变量, 应考虑是否调用 `mark_safe()` 来将变量标记为安全字符串. 当变量最终呈现时, 其会受到那时自动转义设置是否生效的影响. 
+
+此外, 若模板标签创建了一个新的上下文变量以供后续渲染, 也可以设置自动转义变量为当前上下文的对应值, `Context` 类的初始化方法可以接收自动转义变量参数: 
+
+```python
+from django.template import Context
+
+
+def render(self, context):
+    # ...
+    new_context = Context({"var": obj}, autoescape=context.autoescape)
+    # ... Do something with new_context ...
+    
+def render(self, context):
+    t = context.template.engine.get_template("small_fragment.html")
+    return t.render(Context({"var": obj}, autoescape=context.autoescape))
+```
+
+若我们忽略了此设置, 结果可能总是被自动转义, 这在设置 `{% autoescape off %}` 时是我们不想要的结果. 
+
+#### 关于线程安全
+
+
+
+#### 注册标签
+
+```python
+register.tag("current_time", do_current_time)
+
+# 也可使用装饰器注册
+@register.tag(name="current_time")
+def do_current_time(parser, token): ...
+
+# 若省略name参数, 则自动使用函数名称作为标签名称
+@register.tag
+def shout(parser, token): ...
+```
+
+#### 
