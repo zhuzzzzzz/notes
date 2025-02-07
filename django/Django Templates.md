@@ -542,4 +542,37 @@ def do_current_time(parser, token): ...
 def shout(parser, token): ...
 ```
 
-#### 
+#### 向标签传递模板变量
+
+
+
+#### 使用标签设置上下文变量
+
+`render()` 方法总应该返回字符串. 
+
+```python
+import datetime
+from django import template
+
+
+class CurrentTimeNode2(template.Node):
+    def __init__(self, format_string):
+        self.format_string = format_string
+
+    def render(self, context):
+        context["current_time"] = datetime.datetime.now().strftime(self.format_string)
+        return ""
+    
+    
+# use 
+{% current_time "%Y-%m-%d %I:%M %p" %}<p>The time is {{ current_time }}.</p>
+```
+
+在上下文中设置的任何变量都仅在它被赋值的块中可用. 
+
+#### 解析到另一个块标签
+
+
+
+#### 解析到另一个块标签并保存内容
+
