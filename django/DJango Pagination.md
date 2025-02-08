@@ -4,6 +4,8 @@ Django 为管理分页数据同时提供了上层和底层方法.
 
 #### `Paginator` 类
 
+*class* Paginator(*object_list*, *per_page*, *orphans=0*, *allow_empty_first_page=True*, *error_messages=None*)[[source\]](https://github.com/django/django/blob/stable/5.1.x/django/core/paginator.py#L27)
+
 分页用到的所有方法都会用到 `Paginator` 类. 这个类负责处理所有将数据集拆分到页的工作. 
 
 当进行求长和迭代时, 分页器的行为就像是一个以页构成的序列. 
@@ -30,7 +32,71 @@ Required. The maximum number of items to include on a page, not including orphan
 
 ##### Paginator.error_messages
 
+用以覆盖分页器默认抛出的错误信息. 
 
+#### 类方法
+
+##### Paginator.get_page(number)
+
+##### Paginator.page(number)
+
+##### Paginator.get_elided_page_range(number, *, on_each_side=3, on_ends=2)
+
+#### 其他类属性
+
+##### Paginator.ELLIPSIS
+
+用以表示省略页码的字符串, 默认为 "..."
+
+##### Paginator.count
+
+所有页中对象的总数
+
+##### Paginator.num_pages
+
+总共的页数
+
+##### Paginator.page_range
+
+#### `Page` 类
+
+通常不用自己创建 `Page` 对象, 而是通过迭代分页器或使用 `Paginator.page()` 方法得到此对象. 
+
+*class* Page(*object_list*, *number*, *paginator*)[[source\]](https://github.com/django/django/blob/stable/5.1.x/django/core/paginator.py#L181)
+
+#### 类方法
+
+##### Page.has_next()
+
+##### Page.has_previous()
+
+##### Page.has_other_pages()
+
+##### Page.next_page_number()
+
+##### Page.previos_page_number()
+
+##### Page.start_index()
+
+返回当页的第一个对象下标
+
+##### Page.end_index()
+
+返回当页的最后一个对象下标
+
+#### 类属性
+
+##### Page.object_list
+
+当前页面的对象列表
+
+##### Page.number
+
+当前页面的页面号
+
+##### Page.paginator
+
+当前页对象关联的分页器对象
 
 #### 示例
 
