@@ -1,4 +1,4 @@
-## Django Form
+## How to use Django Form
 
 表单用来接受用户的输入数据, Django 提供了一系列工具和库来帮助你构建表单, 用来从站点访问者处接收数据, 处理并返回响应
 
