@@ -227,6 +227,10 @@ kubeadm init --config  kubeadm-config.yaml --upload-certs  # 执行命令初始�
 
 - 插件存在启动错误时可能需要重启 containerd
 
+#### 2.2 calico
+
+
+
 ### 3. 添加后续节点
 
 #### 3.1 准备工作
@@ -348,10 +352,24 @@ kubectl exec -it podname -- /bin/bash
 #### 3.1.6 kubectl describe
 
 ```shell
-kubectl describe pod <pod-name>
+# 查看 pod 情况
+kubectl describe pod <pod-name> -n namespace
 ```
 
-#### 3.1.7 使用工具验证 YAML 文件
+#### 3.1.7 kubectl label 
+
+```shell
+# 为 pod(或资源) 添加标签
+kubectl label po pod app=hello -n kube-public
+# 为 pod(或资源) 更改标签
+kubectl label po pod app=hello2 --overwrite
+# selector 按照 label 单值查找
+kubectl get po -A -l app=hello
+# 查看 lables
+kubectl get po --show-labels
+```
+
+#### 3.1.8 验证 YAML 文件
 
 ```shell
 kubectl apply --dry-run=client -f <file>  # 试运行检查语法错误。
@@ -367,21 +385,21 @@ kubectl create -f nginx-deployment.yaml  # 使用配置文件部署nginx服务
 curl ip-address  # 验证 nginx 的部署情况
 ```
 
-#### 3.2.2 配置和公开服务
+#### 3.2.2 配置内部服务发现(Service)
 
-##### 支持的服务类型
+##### 0. 支持的服务类型
 
-ClusterIP		默认类型，集群的内部服务
+**ClusterIP**		默认类型，用于集群内部访问
 
-NodePort		节点端口类型，将服务公开到集群节点上
+**NodePort**		节点端口类型，将服务公开到集群节点上(会在所有 kube-proxy 节点都绑定一个端口，此端口可以代理至对于 pod，集群外部可以使用任意节点 ip + NodePort 端口号 来访问集群中对应 pod )
 
-LoadBalancer		负载均衡类型，将服务公开到外部负载均衡服务器上
+**ExternalName**		外部名称类型，将服务映射到一个外部域名上
 
-ExternalName		外部名称类型，将服务映射到一个外部域名上
+**LoadBalancer**		负载均衡类型，将服务公开到外部负载均衡服务器上
 
-Headless		无头类型，主要用于DNS解析和服务发现
+**Headless**		无头类型，主要用于DNS解析和服务发现
 
-##### ClusterIP
+##### 1. ClusterIP
 
 ```shell
 kubectl create service nginx-service
@@ -412,7 +430,7 @@ spec:
 kubectl apply -f nginx-service.yaml
 ```
 
-##### NodePort 服务
+##### 2. NodePort
 
 ```yaml
 # nginx-service.yaml
@@ -431,13 +449,215 @@ spec:
     nodePort: 30080
 ```
 
+##### 3. ExternalName
 
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-svc-external
+  labels:
+    app: nginx-svc
+spec:
+  type: ExternalName
+  externalName: www.wolfcode.cn
+```
 
+#### 3.2.3 配置外部服务发现(Ingress)
 
+##### 1. 使用 Helm 安装 ingress-nginx
 
+```shell
+# 获取二进制安装文件
+wget https://get.helm.sh/helm-v3.2.3-linux-amd64.tar.gz
 
+# 解压二进制文件, 将解压目录下的 helm 文件移动至 /usr/local/bin
+tar -zxvf xxx
+cp helm /usr/local/bin/
 
+# 验证是否安装成功
+helm version
+```
 
+##### 2. 添加 helm 仓库
+
+```shell
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+
+# 查看仓库列表
+helm repo list
+
+# 搜索 ingress-nginx
+helm search repo ingress-nginx
+
+# 下载并解压对应安装包
+helm pull ingress-nginx/ingress-nginx
+tar -xf ingress-nginx-4.12.1.tgz
+```
+
+##### 3. 配置参数
+
+```shell
+# 修改 values.yaml
+registry: registry.cn-hangzhou.aliyuncs.com
+image: google_containers/nginx-ingress-controller
+image: google_containers/kube-webhook-certgen
+
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+kind: DaemonSet
+nodeSelector:
+  ingress: "true"
+  
+type: Loadbalacer
+# 改为
+type： CLusterIP
+
+#
+admissionWebhooks:
+  enabled: false
+```
+
+##### 4. 安装
+
+```shell
+# 创建命名空间
+kubectl create ns ingress-nginx
+
+# 为节点添加标签
+kubectl label ubuntu-new1 ingress=true
+
+# 安装 ingress-nginx
+helm install ingress-nginx -n ingress-nginx .
+```
+
+##### 5. 使用 ingress
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-nginx-example
+  annotations:
+    kubernetes.io/ingress.classes: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: k8s.wolfcode.cn
+    http:
+      paths:
+      - pathType: Prefix
+        backend:
+          service:
+            name: nginx-svc
+            port:
+              number: 80
+        path: /api
+```
+
+#### 3.2.4 更新回滚
+
+#### 3.2.5 扩缩容
+
+#### 3.2.6 HPA(Horizontal Pod Autoscaler)
+
+##### 1. 部署 deployment 及 service
+
+```yaml
+# 部署 deployment, 其中设置 resources 字段
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: nginx-deploy
+  name: nginx-deploy
+  namespace: default
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: nginx-deploy
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: nginx-deploy
+    spec:
+      containers:
+      - image: m.daocloud.io/docker.io/library/nginx
+        imagePullPolicy: Always
+        name: nginx
+        resources:
+          limits:
+            cpu: 200m
+            memory: 200Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+# 部署 service, 为已部署的 deployment 提供统一的入口
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-svc
+  labels:
+    app: nginx-delpoy
+spec:
+  selector:
+    app: nginx-deploy
+  ports:
+  - port: 80
+    targetPort: 80
+    name: web
+  type: NodePort
+```
+
+##### 2. 启用 HPA
+
+```shell
+kubectl autoscale deploy nginx-deploy --cpu-percent=20 --min=2 --max=5
+```
+
+##### 3. 管理 HPA
+
+```shell
+# 查看 pod 的资源使用情况
+kubectl top pod
+
+# 查看 node 的资源使用情况
+kubectl top pod
+```
+
+##### 4.安装 metrics-server
+
+```shell
+# 获取 yaml 文件
+wget https://github.com/kubernetes-sigs/metrics-server/releases/latest/download   /components.yaml -O metrics-server-components.yaml
+
+# 替换其中镜像源
+sed -i 's/registry.k8s.io\/metrics-server/registry.cn-hangzhou.aliyuncs.com\/google_containers/g' metrics-server-components.yaml
+
+# 修改 metrics-server-components.yaml 中容器的 tls 配置，使其不验证 tls， 在containers 的 args 参数中增加 --kubelet-insecure-tls 参数
+
+# 安装组件
+kubectl apply -f metrics-server-components.yaml
+```
+
+##### 5. 测试 HPA
+
+```shell
+# 通过死循环向目标 svc 地址发送访问请求
+while true; do wget -q -O- http://<ip:port> > /dev/null; done
+```
 
 
 
