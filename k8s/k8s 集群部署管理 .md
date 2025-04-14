@@ -132,7 +132,7 @@ kubeadm 安装的 k8s 控制平面版本需要与 kubelet 和 kubectl 保持兼�
 
 容器运行时以及 kubelet 的 cgroup driver 设置需要匹配，应都配置为 systemd
 
-注：
+**注：**
 
 In v1.22 and later, if the user does not set the `cgroupDriver` field under `KubeletConfiguration`, kubeadm defaults it to `systemd`.
 
@@ -187,10 +187,6 @@ networking:
 ```shell
 kubeadm init --config  kubeadm-config.yaml --upload-certs  # 执行命令初始化 k8s 控制平面
 ```
-
-![image-20250313171320090](C:\Users\zhu\AppData\Roaming\Typora\typora-user-images\image-20250313171320090.png)
-
-![image-20250313171339512](C:\Users\zhu\AppData\Roaming\Typora\typora-user-images\image-20250313171339512.png)
 
 ### 2. 安装 Pod 网络插件
 
