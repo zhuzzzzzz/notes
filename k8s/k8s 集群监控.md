@@ -480,3 +480,93 @@ http://<NodeIP>:32091
 ```
 
 #### 2. kube-promethus 部署
+
+##### 2.1 部署
+
+```shell
+# 获取项目
+git clone https://github.com/prometheus-operator/kube-prometheus
+
+# 应用配置文件
+kubectl apply --server-side -f manifests/setup
+kubectl wait \
+	--for condition=Established \
+	--all CustomResourceDefinition \
+	--namespace=monitoring
+kubectl apply -f manifests/
+
+# 移除部署
+kubectl delete --ignore-not-found=true -f manifests/ -f manifests/setup
+```
+
+##### 2.2 配置 Ingress
+
+```shell
+# 获取部署的 Service
+kubectl get svc -n monitoring
+NAME                    TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                      AGE
+alertmanager-main       ClusterIP   10.111.8.136     <none>        9093/TCP,8080/TCP            3h34m
+alertmanager-operated   ClusterIP   None             <none>        9093/TCP,9094/TCP,9094/UDP   3h32m
+blackbox-exporter       ClusterIP   10.105.237.221   <none>        9115/TCP,19115/TCP           3h34m
+grafana                 ClusterIP   10.104.207.159   <none>        3000/TCP                     3h34m
+kube-state-metrics      ClusterIP   None             <none>        8443/TCP,9443/TCP            3h34m
+node-exporter           ClusterIP   None             <none>        9100/TCP                     3h34m
+prometheus-adapter      ClusterIP   10.109.149.150   <none>        443/TCP                      3h34m
+prometheus-k8s          ClusterIP   10.109.155.44    <none>        9090/TCP,8080/TCP            3h34m
+prometheus-operated     ClusterIP   None             <none>        9090/TCP                     3h32m
+prometheus-operator     ClusterIP   None             <none>        8443/TCP                     3h34m
+```
+
+```yaml
+# prometheus-ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: monitoring
+  name: prometheus-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: grafana.zhu.cn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: grafana
+            port:
+              number: 3000
+  - host: prometheus.zhu.cn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-k8s
+            port:
+              number: 9090
+  - host: alertmanager.zhu.cn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: alertmanager-main
+            port:
+              number: 9093
+```
+
+```shell
+# 设置 /etc/hosts
+
+# 验证可访问性
+curl grafana.zhu.cn
+curl prometheus.zhu.cn
+curl alertmanager.zhu.cn
+
+# 通过浏览器访问对应地址, 若无法访问, 检查防火墙或对应 VPN 设置
+```
+
