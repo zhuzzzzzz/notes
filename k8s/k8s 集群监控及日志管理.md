@@ -2,7 +2,7 @@
 
 #### Heapster
 
-容器集群监控和性能分析工具，天然支持 kubernetes 和 CoreDns. 
+容器集群监控和性能分析工具，天然支持 kubernetes 和 CoreDns
 
 #### Weave Scope
 
@@ -10,7 +10,7 @@
 
 #### Prometheus
 
-一套开源的时序数据库与监控告警系统，是目前主流的监控方案. 
+一套开源的时序数据库与监控告警系统，是目前主流的监控方案
 
 ### Prometheus
 
@@ -569,4 +569,201 @@ curl alertmanager.zhu.cn
 
 # 通过浏览器访问对应地址, 若无法访问, 检查防火墙或对应 VPN 设置
 ```
+
+### ELK
+
+#### 0. 简介
+
+日志收集和分析领域广泛使用的技术栈，由三个核心开源组件组成：Elasticsearch，Logstasj，Kibana。随着技术演进，部分场景会引入 Filebeat 等轻量级工具代替 Logstash。
+
+#### 1. Elasticsearch
+
+**存储与搜索**，作为分布式搜索引擎，负责日志的存储、索引和实时检索。
+
+- 分布式架构：自动分片和副本机制，支持高可用与水平扩展
+- 全文搜索：基于 Apache Lucene 实现倒排索引，支持海量数据的快速查询与分析
+- 多数据类型支持：兼容结构化、非结构化数据及地理空间数据
+
+##### 1.1 部署
+
+```yaml
+# es-deployment.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - "services"
+  - "namespaces"
+  - "endpoints"
+  verbs:
+  - "get"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+subjects:
+- kind: ServiceAccount
+  name: elasticsearch-logging
+  namespace: logging
+  apiGroup: ""
+roleRef:
+  kind: ClusterRole
+  name: elasticsearch-logging
+  apiGroup: ""
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Elasticsearch"
+spec:
+  ports:
+  - port: 9200
+    protocol: TCP
+    targetPort: db
+  selector:
+    k8s-app: elasticsearch-logging
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch-logging
+  namespace: logging
+  labels:
+    k8s-app: elasticsearch-logging
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    srv: srv-elasticsearch
+spec:
+  serviceName: elasticsearch-logging
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: elasticsearch-logging
+  template:
+    metadata:
+      labels:
+        k8s-app: elasticsearch-logging
+        kubernetes.io/cluster-service: "true"
+    spec:
+      serviceAccountName: elasticsearch-logging
+      nodeSelector:
+        es: data
+      tolerations:
+      - key: ""
+        operator: Exists
+        effect: NoSchedule
+      initContainers:
+      - name: elasticsearch-logging-init
+        image: m.daocloud.io/docker.io/alpine:3.6
+        command: ["/sbin/sysctl", "-w", "vm.max_map_count=1048576"]
+        securityContext:
+          privileged: true
+      - name: incress-fd-ulimit
+        image: m.daocloud.io/docker.io/busybox
+        imagePullPolicy: IfNotPresent
+        command: ["sh", "-c", "ulimit -n 65536"]
+        securityContext:
+          privileged: true
+      - name: elasticsearch-volume-init
+        image: m.daocloud.io/docker.io/alpine:3.6
+        command: ["chmod", "-R", "777", "/usr/share/elasticsearch/data"]
+        volumeMounts:
+        - name: elasticsearch-logging
+          mountPath: /usr/share/elasticsearch/data
+      containers:
+      - image: m.daocloud.io/docker.io/elasticsearch:7.9.3
+        name: elasticsearch-logging
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+          requests:
+            cpu: 100m
+            memory: 500Mi
+        ports:
+        - containerPort: 9200
+          name: db
+          protocol: TCP
+        - containerPort: 9300
+          name: transport
+          protocol: TCP
+        volumeMounts:
+        - name: elasticsearch-logging
+          mountPath: /usr/share/elasticsearch/data/
+        env:
+        - name: "NAMESPACE"
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: "discovery.type"
+          value: "single-node"
+        - name: ES_JAVA_OPTS
+          value: "-Xms512m -Xmx2g"
+  volumeClaimTemplates:
+  - metadata:
+      name: elasticsearch-logging
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: local-path
+```
+
+
+
+#### 2. Logstash
+
+**采集与处理**，日志处理管道，负责从多源(如文件、数据库、消息队列)采集数据，并完成过滤、转换后输出至 Elasticsearch。
+
+- 输入插件：支持文件(File)、系统日志(Syslog)、Beats 等多种数据源
+- 过滤插件：如 Grok 解析非结构化日志、GeoIP 解析地理位置等
+- 输出插件：将处理后的日志发送至 Elasticsearch、kafka 等目标
+
+##### 2.1
+
+#### 3. Kibana
+
+**可视化监控**，提供 Web 界面，用于日志的可视化展示与交互式分析。
+
+- 仪表盘定制：通过图表、热力图等形式展示日志趋势
+- 查询分析：使用 KQL(Kibana Query Language) 进行复杂数据筛选
+- 告警功能：基于日志阈值设置实时告警
+
+##### 3.1
+
+#### 4. Filebeat 或 Fluentd
+
+**EFK架构**，在资源受限或云原生环境中，常用 Filebeat 或 Fluentd 替代 Logstash
 
