@@ -12,9 +12,16 @@ chmod 700 get_helm.sh
 wget https://get.helm.sh/helm-v3.10.0-linux-amd64.tar.gz
 tar -zxvf helm-v3.10.0-linux-amd64.tar.gz
 sudo mv linux-amd64/helm /usr/local/bin/
+
+# apt方式安装
+curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+sudo apt-get install apt-transport-https --yes
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+sudo apt-get update
+sudo apt-get install helm
 ```
 
-#### 2. 搜索配置 helm 仓库
+#### 2. helm 基础操作
 
 ```shell
 # 查看默认仓库
@@ -28,11 +35,43 @@ helm repo update
 # 删除仓库
 helm repo remove aliyun
 
-# 搜索 redis chart
+# 搜索 hub 内的chart
+helm search hub redis
+# 搜索仓库内的 redis chart
 helm search repo redis
 
 # 查看安装说明
 helm show readme bitnami/redis
+
+# 查看 chart 中的可配置选项
+helm show values bitnami/redis
+
+# 使用 yaml 格式的文件覆盖默认的配置项进行安装
+helm install -f values.yaml xxx bitnami/redis
+helm install -f values.yaml bitnami/redis --generate-name
+
+# 更多安装方法
+# 本地 chart 压缩包
+helm install foo foo-0.1.1.tgz
+# 解压后的 chart 目录
+helm install foo path/to/foo
+# 完整的 url
+helm install foo https://example.com/charts/foo-1.2.3.tgz
+
+# 查看 release 状态
+helm status release-name
+
+# 升级
+helm upgrade -f panda.yaml happy-panda bitnami/wordpress
+
+# 查看历史版本
+helm history happy-panda
+
+# 回滚
+helm rollback happy-panda 1
+
+# 查看 release 的配置信息
+helm get values
 ```
 
 #### 3. 配置 StroageClass

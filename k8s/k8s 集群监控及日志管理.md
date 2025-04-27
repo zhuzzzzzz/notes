@@ -559,15 +559,17 @@ spec:
               number: 9093
 ```
 
+##### 2.3 访问服务
+
 ```shell
-# 设置 /etc/hosts
+# 设置 /etc/hosts 指定域名解析地址
 
 # 验证可访问性
 curl grafana.zhu.cn
 curl prometheus.zhu.cn
 curl alertmanager.zhu.cn
 
-# 通过浏览器访问对应地址, 若无法访问, 检查防火墙或对应 VPN 设置
+# 也通过浏览器访问对应地址, 若无法访问, 检查防火墙或对应 VPN 设置
 ```
 
 ### ELK
