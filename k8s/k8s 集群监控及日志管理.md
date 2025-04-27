@@ -574,7 +574,15 @@ curl alertmanager.zhu.cn
 
 #### 0. 简介
 
-日志收集和分析领域广泛使用的技术栈，由三个核心开源组件组成：Elasticsearch，Logstasj，Kibana。随着技术演进，部分场景会引入 Filebeat 等轻量级工具代替 Logstash。
+日志收集和分析领域广泛使用的技术栈，由三个核心开源组件组成：Elasticsearch，Logstash，Kibana。随着技术演进，部分场景会引入 Filebeat 等轻量级工具代替 Logstash。
+
+**Elasticsearch**	日志搜索
+
+**LogStash**		数据清洗
+
+**Filebeat**  		数据采集
+
+**Kibana**    		可视化界面
 
 #### 1. Elasticsearch
 
@@ -741,8 +749,6 @@ spec:
       storageClassName: local-path
 ```
 
-
-
 #### 2. Logstash
 
 **采集与处理**，日志处理管道，负责从多源(如文件、数据库、消息队列)采集数据，并完成过滤、转换后输出至 Elasticsearch。
@@ -751,7 +757,238 @@ spec:
 - 过滤插件：如 Grok 解析非结构化日志、GeoIP 解析地理位置等
 - 输出插件：将处理后的日志发送至 Elasticsearch、kafka 等目标
 
-##### 2.1
+##### 2.1 部署
+
+```yaml
+# logstash-deployment.yaml
+apiVersion: v1 
+kind: Service 
+metadata: 
+  name: logstash 
+  namespace: logging 
+spec: 
+  ports: 
+  - port: 5044 
+    targetPort: beats 
+  selector: 
+    type: logstash 
+  clusterIP: None 
+--- 
+apiVersion: apps/v1 
+kind: Deployment 
+metadata: 
+  name: logstash 
+  namespace: logging 
+spec: 
+  selector: 
+    matchLabels: 
+      type: logstash 
+  template: 
+    metadata: 
+      labels: 
+        type: logstash 
+        srv: srv-logstash 
+    spec: 
+      containers: 
+      - image: m.daocloud.io/docker.io/logstash:7.9.3 #该镜像支持arm64和amd64两种架构 
+        name: logstash 
+        ports: 
+        - containerPort: 5044 
+          name: beats 
+        command: 
+        - logstash 
+        - '-f' 
+        - '/etc/logstash_c/logstash.conf' 
+        env: 
+        - name: "XPACK_MONITORING_ELASTICSEARCH_HOSTS" 
+          value: "http://elasticsearch-logging:9200" 
+        volumeMounts: 
+        - name: config-volume 
+          mountPath: /etc/logstash_c/ 
+        - name: config-yml-volume 
+          mountPath: /usr/share/logstash/config/ 
+        - name: timezone 
+          mountPath: /etc/localtime 
+        resources: #logstash一定要加上资源限制，避免对其他业务造成资源抢占影响 
+          limits: 
+            cpu: 1000m 
+            memory: 2048Mi 
+          requests: 
+            cpu: 512m 
+            memory: 512Mi 
+      volumes: 
+      - name: config-volume 
+        configMap: 
+          name: logstash-conf 
+          items: 
+          - key: logstash.conf 
+            path: logstash.conf 
+      - name: timezone 
+        hostPath: 
+          path: /etc/localtime 
+      - name: config-yml-volume 
+        configMap: 
+          name: logstash-yml 
+          items: 
+          - key: logstash.yml 
+            path: logstash.yml 
+ 
+--- 
+apiVersion: v1 
+kind: ConfigMap 
+metadata: 
+  name: logstash-conf 
+  namespace: logging 
+  labels: 
+    type: logstash 
+data: 
+  logstash.conf: |- 
+    input {
+      beats { 
+        port => 5044 
+      } 
+    } 
+    filter {
+      # 处理 ingress 日志 
+      if [kubernetes][container][name] == "nginx-ingress-controller" {
+        json {
+          source => "message" 
+          target => "ingress_log" 
+        }
+        if [ingress_log][requesttime] { 
+          mutate { 
+            convert => ["[ingress_log][requesttime]", "float"] 
+          }
+        }
+        if [ingress_log][upstremtime] { 
+          mutate { 
+            convert => ["[ingress_log][upstremtime]", "float"] 
+          }
+        } 
+        if [ingress_log][status] { 
+          mutate { 
+            convert => ["[ingress_log][status]", "float"] 
+          }
+        }
+        if  [ingress_log][httphost] and [ingress_log][uri] {
+          mutate { 
+            add_field => {"[ingress_log][entry]" => "%{[ingress_log][httphost]}%{[ingress_log][uri]}"} 
+          } 
+          mutate { 
+            split => ["[ingress_log][entry]","/"] 
+          } 
+          if [ingress_log][entry][1] { 
+            mutate { 
+              add_field => {"[ingress_log][entrypoint]" => "%{[ingress_log][entry][0]}/%{[ingress_log][entry][1]}"} 
+              remove_field => "[ingress_log][entry]" 
+            }
+          } else { 
+            mutate { 
+              add_field => {"[ingress_log][entrypoint]" => "%{[ingress_log][entry][0]}/"} 
+              remove_field => "[ingress_log][entry]" 
+            }
+          }
+        }
+      }
+      # 处理以srv进行开头的业务服务日志 
+      if [kubernetes][container][name] =~ /^srv*/ { 
+        json { 
+          source => "message" 
+          target => "tmp" 
+        } 
+        if [kubernetes][namespace] == "kube-logging" { 
+          drop{} 
+        } 
+        if [tmp][level] { 
+          mutate{ 
+            add_field => {"[applog][level]" => "%{[tmp][level]}"} 
+          } 
+          if [applog][level] == "debug"{ 
+            drop{} 
+          } 
+        } 
+        if [tmp][msg] { 
+          mutate { 
+            add_field => {"[applog][msg]" => "%{[tmp][msg]}"} 
+          } 
+        } 
+        if [tmp][func] { 
+          mutate { 
+            add_field => {"[applog][func]" => "%{[tmp][func]}"} 
+          } 
+        } 
+        if [tmp][cost]{ 
+          if "ms" in [tmp][cost] { 
+            mutate { 
+              split => ["[tmp][cost]","m"] 
+              add_field => {"[applog][cost]" => "%{[tmp][cost][0]}"} 
+              convert => ["[applog][cost]", "float"] 
+            } 
+          } else { 
+            mutate { 
+              add_field => {"[applog][cost]" => "%{[tmp][cost]}"} 
+            }
+          }
+        }
+        if [tmp][method] { 
+          mutate { 
+            add_field => {"[applog][method]" => "%{[tmp][method]}"} 
+          }
+        }
+        if [tmp][request_url] { 
+          mutate { 
+            add_field => {"[applog][request_url]" => "%{[tmp][request_url]}"} 
+          } 
+        }
+        if [tmp][meta._id] { 
+          mutate { 
+            add_field => {"[applog][traceId]" => "%{[tmp][meta._id]}"} 
+          } 
+        } 
+        if [tmp][project] { 
+          mutate { 
+            add_field => {"[applog][project]" => "%{[tmp][project]}"} 
+          }
+        }
+        if [tmp][time] { 
+          mutate { 
+            add_field => {"[applog][time]" => "%{[tmp][time]}"} 
+          }
+        }
+        if [tmp][status] { 
+          mutate { 
+            add_field => {"[applog][status]" => "%{[tmp][status]}"} 
+            convert => ["[applog][status]", "float"] 
+          }
+        }
+      }
+      mutate { 
+        rename => ["kubernetes", "k8s"] 
+        remove_field => "beat" 
+        remove_field => "tmp" 
+        remove_field => "[k8s][labels][app]" 
+      }
+    }
+    output { 
+      elasticsearch { 
+        hosts => ["http://elasticsearch-logging:9200"] 
+        codec => json 
+        index => "logstash-%{+YYYY.MM.dd}" #索引名称以logstash+日志进行每日新建 
+      }
+    } 
+---
+apiVersion: v1 
+kind: ConfigMap 
+metadata: 
+  name: logstash-yml 
+  namespace: logging 
+  labels: 
+    type: logstash 
+data: 
+  logstash.yml: |- 
+    http.host: "0.0.0.0" 
+    xpack.monitoring.elasticsearch.hosts: http://elasticsearch-logging:9200
+```
 
 #### 3. Kibana
 
@@ -761,9 +998,265 @@ spec:
 - 查询分析：使用 KQL(Kibana Query Language) 进行复杂数据筛选
 - 告警功能：基于日志阈值设置实时告警
 
-##### 3.1
+##### 3.1 部署
+
+```yaml
+# kibana-deployment.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: logging
+  name: kibana-config
+  labels:
+    k8s-app: kibana
+data:
+  kibana.yaml: |-
+    server.name: kibana
+    server.host: "0"
+    i18n.locale: zh-CN
+    elasticsearch:
+      hosts: ${ELASTICSEARCH_HOSTS}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    k8s-app: kibana
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Kibana"
+    srv: srv-kibana
+spec:
+  type: NodePort
+  ports:
+  - port: 5601
+    protocol: TCP
+    targetPort: ui
+  selector:
+    k8s-app: kibana
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kibana
+  namespace: logging
+  labels:
+    k8s-app: kibana
+    kubernetes.io/cluster-service: "true"
+    addonmanager.kubernetes.io/mode: Reconcile
+    kubernetes.io/name: "Kibana"
+    srv: srv-kibana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      k8s-app: kibana
+  template:
+    metadata:
+      labels:
+        k8s-app: kibana
+    spec:
+      containers:
+      - name: kibana
+        image: m.daocloud.io/docker.io/kibana:7.9.3
+        resources:
+          limits:
+            cpu: 1000m
+          requests:
+            cpu: 100m
+        env:
+        - name: ELASTICSEARCH_HOSTS
+          value: http://elasticsearch-logging:9200
+        ports:
+        - containerPort: 5601
+          name: ui
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /usr/share/kibana/config/kibana.yaml
+          readOnly: true
+          subPath: kibana.yaml
+      volumes:
+      - name: config
+        configMap:
+          name: kibana-config
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kibana
+  namespace: logging
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: kibana.zhu.cn
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kibana
+            port:
+              number: 5601
+```
 
 #### 4. Filebeat 或 Fluentd
 
 **EFK架构**，在资源受限或云原生环境中，常用 Filebeat 或 Fluentd 替代 Logstash
+
+##### 4.1 Filebeat 部署
+
+```yaml
+# filebeat-deployment.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: filebeat-config
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+data:
+  filebeat.yaml: |-
+    filebeat.inputs:
+    - type: container
+      enable: true
+      paths:
+      - /var/log/containers/*.log
+      processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchars:
+          - logs_path:
+            logs_path: "/var/log/containers/"
+    output.logstash:
+      hosts: ["logstash:5044"]
+      enable: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: filebeat
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: filebeat
+  labels:
+    k8s-app: filebeat
+rules:
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - pods
+  verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: filebeat
+subjects:
+- kind: ServiceAccount
+  name: filebeat
+  namespace: logging
+roleRef:
+  kind: ClusterRole
+  name: filebeat
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat
+  namespace: logging
+  labels:
+    k8s-app: filebeat
+spec:
+  selector:
+    matchLabels:
+      k8s-app: filebeat
+  template:
+    metadata:
+      labels:
+        k8s-app: filebeat
+    spec:
+      serviceAccountName: filebeat
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: filebeat
+        image: m.daocloud.io/docker.io/elastic/filebeat:7.9.3
+        args:
+        - -c
+        - /etc/filebeat.yaml
+        - -e
+        - -httpprof
+        - 0.0.0.0:6060
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: ELASTICSEARCH_HOST
+          value: elasticsearch-logging
+        - name: ELASTICSEARCH_PORT
+          value: "9200"
+        securityContext:
+          runAsUser: 0
+        resources:
+          limits:
+            memory: 1000Mi
+            cpu: 1000m
+          requests:
+            memory: 100Mi
+            cpu: 100m
+        volumeMounts:
+        - name: config
+          mountPath: /etc/filebeat.yaml
+          readOnly: true
+          subPath: filebeat.yaml
+        - name: data
+          mountPath: /usr/share/filebeat/data
+        - name: varlibdockercontainers
+          mountPath: /var/lib
+          readOnly: true
+        - name: timezone
+          mountPath: /etc/localtime
+        - name: varlog
+          mountPath: /var/log/
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          defaultMode: 0600
+          name: filebeat-config
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib
+      - name: varlog
+        hostPath:
+          path: /var/log/
+      - name: inputs
+        configMap:
+          defaultMode: 0600
+          name: filebeat-inputs
+      - name: data
+        hostPath:
+          path: /data/filebeat-data
+          type: DirectoryOrCreate
+      - name: timezone
+        hostPath:
+          path: /etc/localtime
+      tolerations:
+      - key: dedicated
+        value: gpu
+        operator: Equal
+        effect: NoExecute
+      - effect: NoSchedule
+        operator: Exists
+```
 

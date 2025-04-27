@@ -1,3 +1,5 @@
+### 基于 Helm 部署 redis 主从集群
+
 #### 1. 安装 helm
 
 ```shell
@@ -86,7 +88,7 @@ helm uninstall redis
 1. Run a Redis&reg; pod that you can use as a client:
 
    ```shell
-   kubectl run --namespace default redis-client --restart='Never'  --env REDIS_PASSWORD=$REDIS_PASSWORD  --im    age m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6 --command -- sleep infinity
+   kubectl run --namespace default redis-client --restart='Never'  --env REDIS_PASSWORD=$REDIS_PASSWORD  --image m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6 --command -- sleep infinity
    ```
 
    Use the following command to attach to the pod:
@@ -146,3 +148,230 @@ helm delete redis
 ##### 6.4 关于 pvc
 
 默认不会删除 pvc ，可以手动删除以释放占用的磁盘资源
+
+### 部署配置文件分析
+
+#### 0. 使用 kubectl explain 查看字段说明
+
+```shell
+kubectl explain <type>.<fieldName>[.<fieldName>]
+```
+
+#### 1. Redis master YAML
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: redis
+    meta.helm.sh/release-namespace: default
+  generation: 1 # 自动生成，用于跟踪spec的变更历史
+  labels:
+    app.kubernetes.io/component: master
+    app.kubernetes.io/instance: redis
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.4.2
+    helm.sh/chart: redis-20.11.4
+  name: redis-master
+  namespace: default
+  resourceVersion: "691531" # 自动生成，表示资源的当前版本，每当对象的任何部分(包括spec和status)发生变化，更新该值，用于乐观锁和watch机制
+  uid: 28bf9d7c-8b7b-4543-84ed-d342a39d6233 # 自动生成，资源的全局唯一标识符
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain # sts删除时，关联的pvc和底层存储卷的保留策略
+    whenScaled: Retain # sts扩容缩容时，关联的pvc和底层存储卷的保留策略
+  podManagementPolicy: OrderedReady # 或Parallel，两种策略
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: master
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+  serviceName: redis-headless
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: 2a9ab4a5432825504d910f022638674ce88eaefe9f9f595ad8bc107377d104fb
+        checksum/health: aff24913d801436ea469d8d374b2ddb3ec4c43ee7ab24663d5f8ff1a1b6991a9
+        checksum/scripts: 2402f1a299715d378c24e380602cbccb9b58b12e8d914394b3ba78ade9f4f16f
+        checksum/secret: 3f70900d596125b197f330334264d3e2855b320a5123ffadc194e495f3688c4d
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: master
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/version: 7.4.2
+        helm.sh/chart: redis-20.11.4
+    spec:
+      affinity:
+        # 确保一个节点只运行一个redis master
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: master
+                  app.kubernetes.io/instance: redis
+                  app.kubernetes.io/name: redis
+              topologyKey: kubernetes.io/hostname
+            weight: 1
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - -c
+        - /opt/bitnami/scripts/start-scripts/start-master.sh
+        command:
+        - /bin/bash
+        env:
+        - name: BITNAMI_DEBUG
+          value: "false"
+        - name: REDIS_REPLICATION_MODE
+          value: master
+        - name: ALLOW_EMPTY_PASSWORD
+          value: "no"
+        - name: REDIS_PASSWORD_FILE
+          value: /opt/bitnami/redis/secrets/redis-password
+        - name: REDIS_TLS_ENABLED
+          value: "no"
+        - name: REDIS_PORT
+          value: "6379"
+        image: m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_liveness_local.sh 5
+          failureThreshold: 5
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 6
+        name: redis
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_readiness_local.sh 1
+          failureThreshold: 5
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 2
+        resources:
+          limits:
+            cpu: 150m
+            ephemeral-storage: 2Gi
+            memory: 192Mi
+          requests:
+            cpu: 100m
+            ephemeral-storage: 50Mi
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 1001
+          runAsNonRoot: true
+          runAsUser: 1001
+          seLinuxOptions: {}
+          seccompProfile:
+            type: RuntimeDefault
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /opt/bitnami/scripts/start-scripts
+          name: start-scripts
+        - mountPath: /health
+          name: health
+        - mountPath: /opt/bitnami/redis/secrets/
+          name: redis-password
+        - mountPath: /data
+          name: redis-data
+        - mountPath: /opt/bitnami/redis/mounted-etc
+          name: config
+        - mountPath: /opt/bitnami/redis/etc/
+          name: empty-dir
+          subPath: app-conf-dir
+        - mountPath: /tmp
+          name: empty-dir
+          subPath: tmp-dir
+      dnsPolicy: ClusterFirst # 
+      enableServiceLinks: true # 将当前命名空间下的存在的服务资源信息添加到pod环境变量
+      restartPolicy: Always # pod内容器的重启策略
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: Always
+      serviceAccount: redis-master
+      serviceAccountName: redis-master
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          defaultMode: 493
+          name: redis-scripts
+        name: start-scripts
+      - configMap:
+          defaultMode: 493
+          name: redis-health
+        name: health
+      - name: redis-password
+        secret:
+          defaultMode: 420
+          items:
+          - key: redis-password
+            path: redis-password
+          secretName: redis
+      - configMap:
+          defaultMode: 420
+          name: redis-configuration
+        name: config
+      - emptyDir: {}
+        name: empty-dir
+  updateStrategy:
+    type: RollingUpdate # OnDelete, 只有手动删除时才会更新pod；RollingUpdate，滚动更新
+  volumeClaimTemplates: # PVC列表
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: master
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/name: redis
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: local-path
+      volumeMode: Filesystem
+    status:
+      phase: Pending
+status:
+  availableReplicas: 1
+  collisionCount: 0
+  currentReplicas: 1
+  currentRevision: redis-master-5b54b4bcdd
+  observedGeneration: 1
+  readyReplicas: 1
+  replicas: 1
+  updateRevision: redis-master-5b54b4bcdd
+  updatedReplicas: 1
+
+```
+
