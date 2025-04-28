@@ -371,7 +371,7 @@ spec:
         # ping_liveness_local_and_master.sh, ping_readiness_local_and_master.sh  replica节点执行的探针命令，调用上下两种脚本
         # ping_liveness_master.sh,  ping_readiness_master.sh 
       - name: redis-password
-        secret: # 使用secret填充此卷
+        secret: # 使用secret填充此卷，secret内容在填充后会自动解码
           defaultMode: 420 # 644权限
           items:
           - key: redis-password
@@ -415,7 +415,6 @@ status:
   replicas: 1
   updateRevision: redis-master-5b54b4bcdd
   updatedReplicas: 1
-
 ```
 
 #### 2. Redis replica YAML
@@ -492,15 +491,15 @@ spec:
           value: "false"
         - name: REDIS_REPLICATION_MODE
           value: replica
-        - name: REDIS_MASTER_HOST
+        - name: REDIS_MASTER_HOST # 从节点独有
           value: redis-master-0.redis-headless.default.svc.cluster.local
-        - name: REDIS_MASTER_PORT_NUMBER
+        - name: REDIS_MASTER_PORT_NUMBER # 从节点独有
           value: "6379"
         - name: ALLOW_EMPTY_PASSWORD
           value: "no"
         - name: REDIS_PASSWORD_FILE
           value: /opt/bitnami/redis/secrets/redis-password
-        - name: REDIS_MASTER_PASSWORD_FILE
+        - name: REDIS_MASTER_PASSWORD_FILE # 从节点独有
           value: /opt/bitnami/redis/secrets/redis-password
         - name: REDIS_TLS_ENABLED
           value: "no"
@@ -657,6 +656,7 @@ status:
 #!/bin/bash
 
 [[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+# REDIS_PASSWORD_FILE: pod启动时传递的环境变量，文件内容导出到REDIS_PASSWORD环境变量
 if [[ -f /opt/bitnami/redis/mounted-etc/master.conf ]];then
     cp /opt/bitnami/redis/mounted-etc/master.conf /opt/bitnami/redis/etc/master.conf
 fi
@@ -686,6 +686,7 @@ get_port() {
     port_var=$(echo "${hostname^^}_SERVICE_PORT_$type" | sed "s/-/_/g")
     port=${!port_var}
 
+	# 是否定义该主机关于Redis端口及哨兵端口的环境变量，有则使用环境变量值，没有则使用默认值
     if [ -z "$port" ]; then
         case $type in
             "SENTINEL")
@@ -731,5 +732,117 @@ ARGS+=("--masterauth" "${REDIS_MASTER_PASSWORD}")
 ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
 ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
 exec redis-server "${ARGS[@]}"
+```
+
+#### 4. 探针脚本
+
+- 就绪探针和存活探针均基于 redis-cli ping 操作，主节点只需 ping local server，从节点则还需 ping 主节点.
+- 就绪探针的超时时间为 5 s，存活探针超时时间为 1 s，其余内容基本一致，后者的条件更为严苛.
+
+##### 1. 就绪探针
+
+```shell
+# ping_liveness_local.sh
+
+#!/bin/bash
+
+[[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+[[ -n "$REDIS_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+# `time -s 15 $1` 超时后发送编号为15(SIGTERM)的信号，$1表示超时时间
+response=$(
+  timeout -s 15 $1 \
+  redis-cli \
+    -h localhost \
+    -p $REDIS_PORT \
+    ping
+)
+if [ "$?" -eq "124" ]; then
+  echo "Timed out"
+  exit 1
+fi
+responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ] && [ "$responseFirstWord" != "MASTERDOWN" ]; then
+  echo "$response"
+  exit 1
+fi
+
+# ping_liveness_master.sh
+
+#!/bin/bash
+
+[[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+[[ -n "$REDIS_MASTER_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_MASTER_PASSWORD"
+response=$(
+  timeout -s 15 $1 \
+  redis-cli \
+    -h $REDIS_MASTER_HOST \
+    -p $REDIS_MASTER_PORT_NUMBER \
+    ping
+)
+if [ "$?" -eq "124" ]; then
+  echo "Timed out"
+  exit 1
+fi
+responseFirstWord=$(echo $response | head -n1 | awk '{print $1;}')
+if [ "$response" != "PONG" ] && [ "$responseFirstWord" != "LOADING" ]; then
+  echo "$response"
+  exit 1
+fi
+
+# ping_liveness_local_and_master.sh
+
+script_dir="$(dirname "$0")"
+exit_status=0
+"$script_dir/ping_liveness_local.sh" $1 || exit_status=$?
+"$script_dir/ping_liveness_master.sh" $1 || exit_status=$?
+exit $exit_status
+```
+
+##### 2. 存活探针
+
+```shell
+# ping_readiness_local.sh
+
+#!/bin/bash
+
+[[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+[[ -n "$REDIS_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_PASSWORD"
+response=$(
+  timeout -s 15 $1 \
+  redis-cli \
+    -h localhost \
+    -p $REDIS_PORT \
+    ping
+)
+if [ "$?" -eq "124" ]; then
+  echo "Timed out"
+  exit 1
+fi
+if [ "$response" != "PONG" ]; then
+  echo "$response"
+  exit 1
+fi
+
+# ping_readiness_master.sh
+
+#!/bin/bash
+
+[[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+[[ -n "$REDIS_MASTER_PASSWORD" ]] && export REDISCLI_AUTH="$REDIS_MASTER_PASSWORD"
+response=$(
+  timeout -s 15 $1 \
+  redis-cli \
+    -h $REDIS_MASTER_HOST \
+    -p $REDIS_MASTER_PORT_NUMBER \
+    ping
+)
+if [ "$?" -eq "124" ]; then
+  echo "Timed out"
+  exit 1
+fi
+if [ "$response" != "PONG" ]; then
+  echo "$response"
+  exit 1
+fi
 ```
 
