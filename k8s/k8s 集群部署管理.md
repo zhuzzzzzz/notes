@@ -40,7 +40,7 @@
 
 containerd 使用的 CRI 套接字为 /run/containerd/containerd.sock
 
-##### 2.1.1 安装nnn/
+##### 2.1.1 安装
 
 - 安装 docker-ce 时将自动安装 containerd, 参考[文档](https://docs.docker.com/engine/install/ubuntu/)及[文档](https://docs.docker.com/engine/install/linux-postinstall/)安装 docker-ce. 
 - 也可单独安装 containerd, 参考[文档](https://github.com/containerd/containerd/blob/main/docs/getting-started.md). 
@@ -68,7 +68,10 @@ containerd 使用的 CRI 套接字为 /run/containerd/containerd.sock
 
   ```toml
   [plugins."io.containerd.grpc.v1.cri"]
-    sandbox_image = "registry.k8s.io/pause:3.10"
+    sandbox_image = "registry.cn-hangzhou.aliyuncs.com/google_containers/pause:3.10"
+    
+  # 查看k8s集群默认镜像
+  kubeadm config images list
   ```
 
 - 重启 containerd
@@ -205,17 +208,15 @@ kubeadm init --config  kubeadm-config.yaml --upload-certs  # 执行命令初始�
 
 - 插件存在启动错误时可能需要删除对于 pod 或重启 containerd 
 
-```yaml
----
-apiVersion: kubeadm.k8s.io/v1beta4
-controlPlaneEndpoint: "172.16.2.223:6443"
-clusterName: kubernetes
-imageRepository: registry.cn-hangzhou.aliyuncs.com/google_containers
-kind: ClusterConfiguration
-kubernetesVersion: 1.31.0
-networking:
-  podSubnet: 10.244.0.0/16
-```
+  ```shell
+  # 插件报错日志:
+  # Failed to check br_netfilter: stat /proc/sys/net/bridge/bridge-nf-call-iptables: no such file or directory
+  # 解决办法
+  # 临时加载 br_netfilter 模块
+  sudo modprobe br_netfilter
+  # 编辑 /etc/modules-load.d/br_netfilter.conf 文件，确保在系统启动时加载 br_netfilter 模块：
+  echo "br_netfilter" | sudo tee /etc/modules-load.d/br_netfilter.conf
+  ```
 
 #### 2.2 calico
 

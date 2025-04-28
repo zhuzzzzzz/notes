@@ -113,21 +113,21 @@ helm uninstall redis
 
 #### 5. 安装成功
 
-**Redis&reg; can be accessed on the following DNS names from within your cluster:**
+```shell
+# Redis&reg; can be accessed on the following DNS names from within your cluster:
+redis-master.default.svc.cluster.local for read/write operations (port 6379)
+redis-replicas.default.svc.cluster.local for read-only operations (port 6379)
 
-    redis-master.default.svc.cluster.local for read/write operations (port 6379)
-    redis-replicas.default.svc.cluster.local for read-only operations (port 6379)
-
-**To get your password run:**
-
-    export REDIS_PASSWORD=$(kubectl get secret --namespace default redis -o jsonpath="{.data.redis-password}"     | base64 -d)
+# To get your password run:
+export REDIS_PASSWORD=$(kubectl get secret --namespace default redis -o jsonpath="{.data.redis-password}" | base64 -d)
+```
 
 **To connect to your Redis&reg; server:**
 
 1. Run a Redis&reg; pod that you can use as a client:
 
    ```shell
-   kubectl run --namespace default redis-client --restart='Never'  --env REDIS_PASSWORD=$REDIS_PASSWORD  --image m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6 --command -- sleep infinity
+   kubectl run --namespace default redis-client --restart='Never' --env REDIS_PASSWORD=$REDIS_PASSWORD --image m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6 --command -- sleep infinity
    ```
 
    Use the following command to attach to the pod:
@@ -280,23 +280,23 @@ spec:
           value: "6379"
         image: m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6
         imagePullPolicy: IfNotPresent
-        livenessProbe:
+        livenessProbe: # 存活探针，失败后容器会被重启(根据restartPolicy)
           exec:
             command:
             - sh
             - -c
             - /health/ping_liveness_local.sh 5
-          failureThreshold: 5
-          initialDelaySeconds: 20
-          periodSeconds: 5
-          successThreshold: 1
-          timeoutSeconds: 6
+          failureThreshold: 5 # 被认为失效的连续探测失败次数
+          initialDelaySeconds: 20 # 容器启动后的检测时延
+          periodSeconds: 5 # 探测间隔
+          successThreshold: 1 # 被认为成功的连续探测成功次数
+          timeoutSeconds: 6 # 超时时间
         name: redis
         ports:
         - containerPort: 6379
           name: redis
           protocol: TCP
-        readinessProbe:
+        readinessProbe: # 就绪探针，失败后容器会被从Service的Endpoints中移除，停止接收流量，不会重启
           exec:
             command:
             - sh
@@ -328,8 +328,8 @@ spec:
           seLinuxOptions: {}
           seccompProfile:
             type: RuntimeDefault
-        terminationMessagePath: /dev/termination-log
-        terminationMessagePolicy: File
+        terminationMessagePath: /dev/termination-log # 容器内挂载的终止信息文件存储路径
+        terminationMessagePolicy: File # 如何生成终止信息，从文件读取；FallbackToLogsOnError，从容器日志读取最近的内容
         volumeMounts:
         - mountPath: /opt/bitnami/scripts/start-scripts
           name: start-scripts
@@ -358,17 +358,21 @@ spec:
       serviceAccountName: redis-master
       terminationGracePeriodSeconds: 30
       volumes:
-      - configMap:
-          defaultMode: 493
+      - configMap: # 使用configMap填充此卷
+          defaultMode: 493 # 755权限
           name: redis-scripts
         name: start-scripts
+        # start-master.sh, start-replica.sh
       - configMap:
           defaultMode: 493
           name: redis-health
         name: health
+        # ping_liveness_local.sh, ping_readiness_local.sh  master节点执行的探针命令
+        # ping_liveness_local_and_master.sh, ping_readiness_local_and_master.sh  replica节点执行的探针命令，调用上下两种脚本
+        # ping_liveness_master.sh,  ping_readiness_master.sh 
       - name: redis-password
-        secret:
-          defaultMode: 420
+        secret: # 使用secret填充此卷
+          defaultMode: 420 # 644权限
           items:
           - key: redis-password
             path: redis-password
@@ -393,12 +397,12 @@ spec:
       name: redis-data
     spec:
       accessModes:
-      - ReadWriteOnce
+      - ReadWriteOnce # 只能由单个pod读写，同节点的其他pod可读
       resources:
         requests:
           storage: 1Gi
       storageClassName: local-path
-      volumeMode: Filesystem
+      volueMode: Filesystem # Block或Filesystem
     status:
       phase: Pending
 status:
@@ -412,5 +416,320 @@ status:
   updateRevision: redis-master-5b54b4bcdd
   updatedReplicas: 1
 
+```
+
+#### 2. Redis replica YAML
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: redis
+    meta.helm.sh/release-namespace: default
+  creationTimestamp: "2025-04-28T06:47:53Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/component: replica
+    app.kubernetes.io/instance: redis
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/version: 7.4.2
+    helm.sh/chart: redis-20.11.4
+  name: redis-replicas
+  namespace: default
+  resourceVersion: "13350"
+  uid: 986a0b05-fc80-4ca7-a22c-81f518d2eaea
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 3
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: replica
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+  serviceName: redis-headless
+  template:
+    metadata:
+      annotations:
+        checksum/configmap: 2a9ab4a5432825504d910f022638674ce88eaefe9f9f595ad8bc107377d104fb
+        checksum/health: aff24913d801436ea469d8d374b2ddb3ec4c43ee7ab24663d5f8ff1a1b6991a9
+        checksum/scripts: 2402f1a299715d378c24e380602cbccb9b58b12e8d914394b3ba78ade9f4f16f
+        checksum/secret: 03ed3938b77c7727208a32ade0193c1363d371f217c14b383fa460d4b9a98780
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: replica
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/version: 7.4.2
+        helm.sh/chart: redis-20.11.4
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/component: replica
+                  app.kubernetes.io/instance: redis
+                  app.kubernetes.io/name: redis
+              topologyKey: kubernetes.io/hostname
+            weight: 1
+      automountServiceAccountToken: false
+      containers:
+      - args:
+        - -c
+        - /opt/bitnami/scripts/start-scripts/start-replica.sh
+        command:
+        - /bin/bash
+        env:
+        - name: BITNAMI_DEBUG
+          value: "false"
+        - name: REDIS_REPLICATION_MODE
+          value: replica
+        - name: REDIS_MASTER_HOST
+          value: redis-master-0.redis-headless.default.svc.cluster.local
+        - name: REDIS_MASTER_PORT_NUMBER
+          value: "6379"
+        - name: ALLOW_EMPTY_PASSWORD
+          value: "no"
+        - name: REDIS_PASSWORD_FILE
+          value: /opt/bitnami/redis/secrets/redis-password
+        - name: REDIS_MASTER_PASSWORD_FILE
+          value: /opt/bitnami/redis/secrets/redis-password
+        - name: REDIS_TLS_ENABLED
+          value: "no"
+        - name: REDIS_PORT
+          value: "6379"
+        image: m.daocloud.io/docker.io/bitnami/redis:7.4.2-debian-12-r6
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_liveness_local_and_master.sh 5
+          failureThreshold: 5
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 6
+        name: redis
+        ports:
+        - containerPort: 6379
+          name: redis
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - /health/ping_readiness_local_and_master.sh 1
+          failureThreshold: 5
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 2
+        resources:
+          limits:
+            cpu: 150m
+            ephemeral-storage: 2Gi
+            memory: 192Mi
+          requests:
+            cpu: 100m
+            ephemeral-storage: 50Mi
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+          runAsGroup: 1001
+          runAsNonRoot: true
+          runAsUser: 1001
+          seLinuxOptions: {}
+          seccompProfile:
+            type: RuntimeDefault
+        startupProbe:
+          failureThreshold: 22
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          successThreshold: 1
+          tcpSocket:
+            port: redis
+          timeoutSeconds: 5
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /opt/bitnami/scripts/start-scripts
+          name: start-scripts
+        - mountPath: /health
+          name: health
+        - mountPath: /opt/bitnami/redis/secrets/
+          name: redis-password
+        - mountPath: /data
+          name: redis-data
+        - mountPath: /opt/bitnami/redis/mounted-etc
+          name: config
+        - mountPath: /opt/bitnami/redis/etc
+          name: empty-dir
+          subPath: app-conf-dir
+        - mountPath: /tmp
+          name: empty-dir
+          subPath: tmp-dir
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: true
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 1001
+        fsGroupChangePolicy: Always
+      serviceAccount: redis-replica
+      serviceAccountName: redis-replica
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - configMap:
+          defaultMode: 493
+          name: redis-scripts
+        name: start-scripts
+      - configMap:
+          defaultMode: 493
+          name: redis-health
+        name: health
+      - name: redis-password
+        secret:
+          defaultMode: 420
+          items:
+          - key: redis-password
+            path: redis-password
+          secretName: redis
+      - configMap:
+          defaultMode: 420
+          name: redis-configuration
+        name: config
+      - emptyDir: {}
+        name: empty-dir
+  updateStrategy:
+    type: RollingUpdate
+  volumeClaimTemplates:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: replica
+        app.kubernetes.io/instance: redis
+        app.kubernetes.io/name: redis
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: local-path
+      volumeMode: Filesystem
+    status:
+      phase: Pending
+status:
+  availableReplicas: 3
+  collisionCount: 0
+  currentReplicas: 3
+  currentRevision: redis-replicas-5447cc9d45
+  observedGeneration: 1
+  readyReplicas: 3
+  replicas: 3
+  updateRevision: redis-replicas-5447cc9d45
+  updatedReplicas: 3
+```
+
+#### 3.  启动脚本
+
+##### 1. master 启动脚本
+
+```shell
+#!/bin/bash
+
+[[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+if [[ -f /opt/bitnami/redis/mounted-etc/master.conf ]];then
+    cp /opt/bitnami/redis/mounted-etc/master.conf /opt/bitnami/redis/etc/master.conf
+fi
+if [[ -f /opt/bitnami/redis/mounted-etc/redis.conf ]];then
+    cp /opt/bitnami/redis/mounted-etc/redis.conf /opt/bitnami/redis/etc/redis.conf
+fi
+if [[ -f /opt/bitnami/redis/mounted-etc/users.acl ]];then
+    cp /opt/bitnami/redis/mounted-etc/users.acl /opt/bitnami/redis/etc/users.acl
+fi
+ARGS=("--port" "${REDIS_PORT}")
+ARGS+=("--requirepass" "${REDIS_PASSWORD}")
+ARGS+=("--masterauth" "${REDIS_PASSWORD}")
+ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
+ARGS+=("--include" "/opt/bitnami/redis/etc/master.conf")
+exec redis-server "${ARGS[@]}"
+```
+
+##### 2. replica 启动脚本
+
+```shell
+#!/bin/bash
+
+get_port() {
+    hostname="$1"
+    type="$2"
+
+    port_var=$(echo "${hostname^^}_SERVICE_PORT_$type" | sed "s/-/_/g")
+    port=${!port_var}
+
+    if [ -z "$port" ]; then
+        case $type in
+            "SENTINEL")
+                echo 26379
+                ;;
+            "REDIS")
+                echo 6379
+                ;;
+        esac
+    else
+        echo $port
+    fi
+}
+
+get_full_hostname() {
+    hostname="$1"
+    full_hostname="${hostname}.${HEADLESS_SERVICE}"
+    echo "${full_hostname}"
+}
+
+REDISPORT=$(get_port "$HOSTNAME" "REDIS")
+HEADLESS_SERVICE="redis-headless.default.svc.cluster.local"
+
+[[ -f $REDIS_PASSWORD_FILE ]] && export REDIS_PASSWORD="$(< "${REDIS_PASSWORD_FILE}")"
+[[ -f $REDIS_MASTER_PASSWORD_FILE ]] && export REDIS_MASTER_PASSWORD="$(< "${REDIS_MASTER_PASSWORD_FILE}")"
+if [[ -f /opt/bitnami/redis/mounted-etc/replica.conf ]];then
+    cp /opt/bitnami/redis/mounted-etc/replica.conf /opt/bitnami/redis/etc/replica.conf
+fi
+if [[ -f /opt/bitnami/redis/mounted-etc/redis.conf ]];then
+    cp /opt/bitnami/redis/mounted-etc/redis.conf /opt/bitnami/redis/etc/redis.conf
+fi
+if [[ -f /opt/bitnami/redis/mounted-etc/users.acl ]];then
+    cp /opt/bitnami/redis/mounted-etc/users.acl /opt/bitnami/redis/etc/users.acl
+fi
+
+echo "" >> /opt/bitnami/redis/etc/replica.conf
+echo "replica-announce-port $REDISPORT" >> /opt/bitnami/redis/etc/replica.conf
+echo "replica-announce-ip $(get_full_hostname "$HOSTNAME")" >> /opt/bitnami/redis/etc/replica.conf
+ARGS=("--port" "${REDIS_PORT}")
+ARGS+=("--replicaof" "${REDIS_MASTER_HOST}" "${REDIS_MASTER_PORT_NUMBER}")
+ARGS+=("--requirepass" "${REDIS_PASSWORD}")
+ARGS+=("--masterauth" "${REDIS_MASTER_PASSWORD}")
+ARGS+=("--include" "/opt/bitnami/redis/etc/redis.conf")
+ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
+exec redis-server "${ARGS[@]}"
 ```
 
