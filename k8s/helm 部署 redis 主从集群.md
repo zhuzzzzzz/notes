@@ -96,7 +96,7 @@ image: m.daocloud.io/docker.io/library/busybox
 helm pull bitnami/redis
 
 # 解压
-tar -xf redis.tgz
+tar -xfz redis.tgz
 
 # 配置 values.yaml 
 imageRegistry: m.daocloud.io/docker.io
@@ -648,7 +648,135 @@ status:
   updatedReplicas: 3
 ```
 
-#### 3.  启动脚本
+#### 3. Service YAML
+
+- 创建无头服务将两个 StatefulSet 中的 pod 暴露，并提供每个 pod 的独立域名访问
+- 对于主节点和从节点分别创建 ClusterIP 类型的服务
+
+```yaml
+# redis-headless-service.yaml
+apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      meta.helm.sh/release-name: redis
+      meta.helm.sh/release-namespace: default
+    creationTimestamp: "2025-04-28T06:47:53Z"
+    labels:
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/version: 7.4.2
+      helm.sh/chart: redis-20.11.4
+    name: redis-headless
+    namespace: default
+    resourceVersion: "13025"
+    uid: f0608c0c-5293-4378-a102-78ed5c0eb1d5
+  spec:
+    clusterIP: None
+    clusterIPs:
+    - None
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: tcp-redis
+      port: 6379
+      protocol: TCP
+      targetPort: redis
+    selector:
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+
+# redis-master-service.yaml
+apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      meta.helm.sh/release-name: redis
+      meta.helm.sh/release-namespace: default
+    creationTimestamp: "2025-04-28T06:47:53Z"
+    labels:
+      app.kubernetes.io/component: master
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/version: 7.4.2
+      helm.sh/chart: redis-20.11.4
+    name: redis-master
+    namespace: default
+    resourceVersion: "13030"
+    uid: c17f90b9-7278-4408-b250-83fffb97425f
+  spec:
+    clusterIP: 10.96.194.94
+    clusterIPs:
+    - 10.96.194.94
+    internalTrafficPolicy: Cluster # Local，只与本节点的服务端口通信 ；Cluster，与服务内所有端口通信
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: tcp-redis
+      port: 6379
+      protocol: TCP
+      targetPort: redis
+    selector:
+      app.kubernetes.io/component: master
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+
+# redis-replicas-service.yaml
+apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      meta.helm.sh/release-name: redis
+      meta.helm.sh/release-namespace: default
+    creationTimestamp: "2025-04-28T06:47:53Z"
+    labels:
+      app.kubernetes.io/component: replica
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/managed-by: Helm
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/version: 7.4.2
+      helm.sh/chart: redis-20.11.4
+    name: redis-replicas
+    namespace: default
+    resourceVersion: "13034"
+    uid: ccd35dc8-80bf-4e9c-9342-59ecc043aca8
+  spec:
+    clusterIP: 10.101.36.142
+    clusterIPs:
+    - 10.101.36.142
+    internalTrafficPolicy: Cluster
+    ipFamilies:
+    - IPv4
+    ipFamilyPolicy: SingleStack
+    ports:
+    - name: tcp-redis
+      port: 6379
+      protocol: TCP
+      targetPort: redis
+    selector:
+      app.kubernetes.io/component: replica
+      app.kubernetes.io/instance: redis
+      app.kubernetes.io/name: redis
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+```
+
+#### 4.  启动脚本
 
 ##### 1. master 启动脚本
 
@@ -734,7 +862,7 @@ ARGS+=("--include" "/opt/bitnami/redis/etc/replica.conf")
 exec redis-server "${ARGS[@]}"
 ```
 
-#### 4. 探针脚本
+#### 5. 探针脚本
 
 - 就绪探针和存活探针均基于 redis-cli ping 操作，主节点只需 ping local server，从节点则还需 ping 主节点.
 - 就绪探针的超时时间为 5 s，存活探针超时时间为 1 s，其余内容基本一致，后者的条件更为严苛.

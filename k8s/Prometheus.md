@@ -385,6 +385,61 @@ tracing:
 
 可以通过 `relabel_config` 实现抓取前的对于任意目标及其标签的高级修改功能
 
+#### config_relabels(重要)
+
+标签重标记是非常强大的工具，可以在抓取目标之前动态重写抓取目标的标签集合. 标签的应用顺序与其在配置文件内的定义顺序相同. 
+
+**元标签和 relabels_config 标签：** Labels starting with `__` will be removed from the label set after target relabeling is completed.
+
+- 在已配置的标签之外，目标的会根据抓取配置自动生成一个 `job` 标签(默认设置为 job_name)和 `instance` 标签(默认设置为 `__address__`)，`__address__` 标签被设置为目标的 `<host>:<port>`
+- `__meta_` 开头的标签是供重标记阶段使用的元标签，这些标签是抓取目标所提供的，由服务发现机制设置. 
+
+```yaml
+# The source_labels tells the rule what labels to fetch from the series. Any 
+# labels which do not exist get a blank value ("").  Their content is concatenated
+# using the configured separator and matched against the configured regular expression
+# for the replace, keep, and drop actions.
+[ source_labels: '[' <labelname> [, ...] ']' ]
+
+# Separator placed between concatenated source label values.
+[ separator: <string> | default = ; ]
+
+# Label to which the resulting value is written in a replace action.
+# It is mandatory for replace actions. Regex capture groups are available.
+[ target_label: <labelname> ]
+
+# Regular expression against which the extracted value is matched.
+[ regex: <regex> | default = (.*) ]
+
+# Modulus to take of the hash of the source label values.
+[ modulus: <int> ]
+
+# Replacement value against which a regex replace is performed if the
+# regular expression matches. Regex capture groups are available.
+[ replacement: <string> | default = $1 ]
+
+# Action to perform based on regex matching.
+[ action: <relabel_action> | default = replace ]
+```
+
+`<regex>` is any valid [RE2 regular expression](https://github.com/google/re2/wiki/Syntax). It is required for the `replace`, `keep`, `drop`, `labelmap`,`labeldrop` and `labelkeep` actions. The regex is anchored on both ends. To un-anchor the regex, use `.*<regex>.*`.
+
+`<relabel_action>` determines the relabeling action to take:
+
+- `replace`: Match `regex` against the concatenated `source_labels`. Then, set `target_label` to `replacement`, with match group references (`${1}`, `${2}`, ...) in `replacement` substituted by their value. If `regex` does not match, no replacement takes place.
+- `lowercase`: Maps the concatenated `source_labels` to their lower case.
+- `uppercase`: Maps the concatenated `source_labels` to their upper case.
+- `keep`: Drop targets for which `regex` does not match the concatenated `source_labels`.
+- `drop`: Drop targets for which `regex` matches the concatenated `source_labels`.
+- `keepequal`: Drop targets for which the concatenated `source_labels` do not match `target_label`.
+- `dropequal`: Drop targets for which the concatenated `source_labels` do match `target_label`.
+- `hashmod`: Set `target_label` to the `modulus` of a hash of the concatenated `source_labels`.
+- `labelmap`: Match `regex` against all source label names, not just those specified in `source_labels`. Then copy the values of the matching labels to label names given by `replacement` with match group references (`${1}`, `${2}`, ...) in `replacement` substituted by their value.
+- `labeldrop`: Match `regex` against all label names. Any label that matches will be removed from the set of labels.
+- `labelkeep`: Match `regex` against all label names. Any label that does not match will be removed from the set of labels.
+
+Care must be taken with `labeldrop` and `labelkeep` to ensure that metrics are still uniquely labeled once the labels are removed.
+
 #### file_sd_config
 
 读取指定文件中包含的 static_configs 配置属性. 将会通过磁盘监控机制对指定的文件动态监测并应用文件更改，以更新抓取配置. 
