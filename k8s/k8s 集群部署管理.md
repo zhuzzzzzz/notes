@@ -60,7 +60,7 @@ containerd 使用的 CRI 套接字为 /run/containerd/containerd.sock
   ```toml
   [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc]
     ...
-    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runc.options]
+    [plugins."io.contai:nerd.grpc.v1.cri".containerd.runtimes.runc.options]
       SystemdCgroup = true
   ```
 

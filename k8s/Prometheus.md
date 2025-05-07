@@ -57,6 +57,10 @@ scrape_configs:
 # 启动后访问 http://localhost:9090
 
 # 核实 Prometheus 正在向外提供自身指标，访问 http://localhost:9090/metrics
+
+# 重新加载配置文件
+kill -s SIGHUP <PID>
+curl -X POST http://localhost:9090/-/reload
 ```
 
 #### 4. 使用表达式浏览器和图形接口
@@ -65,11 +69,7 @@ scrape_configs:
 
 ### 基于 Basic Auth 加密 Prometheus 
 
-#### 1. 
-
-
-
-
+#### 1.
 
 ### Node Exporter 监视 Linux 指标
 
@@ -121,6 +121,65 @@ scrape_configs:
       - targets: ['localhost:8082']
         labels:
           group: 'canary'
+```
+
+### 抓取 docker 相关指标
+
+#### 1. 
+
+```yaml
+# scrape-config.yaml  
+  
+  # Create a job for Docker Swarm containers.
+#  - job_name: "docker-containers"
+#    docker_sd_configs:
+#      - host: unix:///var/run/docker.sock # You can also use http/https to connect to the Docker daemon.
+
+  - job_name: 'node-swarm'
+    dockerswarm_sd_configs:
+      - host: unix:///var/run/docker.sock
+        role: nodes
+   #     port: 9323
+    relabel_configs:
+      # Fetch metrics on port 9323.
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: $1:9323
+      # Set hostname as instance label
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: instance
+        replacement: $1-swarm
+
+  # Create a job for Swarm tasks.
+  - job_name: 'task-swarm'
+    dockerswarm_sd_configs:
+      - host: unix:///var/run/docker.sock
+        role: tasks
+    relabel_configs:
+      # Set hostname as instance label
+      - source_labels: [__meta_dockerswarm_node_hostname]
+        target_label: instance
+        replacement: $1-cadvisor
+      - source_labels: [__meta_dockerswarm_node_address]
+        target_label: __address__
+        replacement: $1:8080
+      # Only keep containers that have a `prometheus-job` label.
+      - source_labels: [__meta_dockerswarm_container_label_prometheus_job]
+        regex: .+
+        action: keep
+#      - source_labels: [__meta_dockerswarm_node_role]
+#        regex: manager
+#        action: keep
+      # Use the prometheus-job Swarm label as Prometheus job label.
+      - source_labels: [__meta_dockerswarm_container_label_prometheus_job]
+        target_label: job
+        replacement: $1
+
+  # Create a job for Swarm services.
+#  - job_name: 'service-swarm'
+#    dockerswarm_sd_configs:
+#      - host: unix:///var/run/docker.sock
+#        role: services
 ```
 
 ## 概念
@@ -592,5 +651,283 @@ groups:
 {{ $labels.<labelname> }}
 # To insert the numeric expression value of the firing element:
 {{ $value }}
+```
+
+##  kube-prometheus 部署配置分析
+
+### 1. 配置
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    prometheus-operator-input-hash: "11063300221446468566"
+  creationTimestamp: "2025-05-07T09:16:18Z"
+  generation: 1
+  labels:
+    app.kubernetes.io/component: prometheus
+    app.kubernetes.io/instance: k8s
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/part-of: kube-prometheus
+    app.kubernetes.io/version: 2.54.1
+    managed-by: prometheus-operator
+    operator.prometheus.io/mode: server
+    operator.prometheus.io/name: k8s
+    operator.prometheus.io/shard: "0"
+  name: prometheus-k8s
+  namespace: monitoring
+  ownerReferences:
+  - apiVersion: monitoring.coreos.com/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: Prometheus
+    name: k8s
+    uid: 3f516e01-c5f5-4412-95fc-41896a3c5833
+  resourceVersion: "3514"
+  uid: b555f120-1b47-4a39-9c59-21b88490a2df
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: Parallel
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: k8s
+      app.kubernetes.io/managed-by: prometheus-operator
+      app.kubernetes.io/name: prometheus
+      operator.prometheus.io/name: k8s
+      operator.prometheus.io/shard: "0"
+      prometheus: k8s
+  serviceName: prometheus-operated
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: prometheus
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: prometheus
+        app.kubernetes.io/instance: k8s
+        app.kubernetes.io/managed-by: prometheus-operator
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/part-of: kube-prometheus
+        app.kubernetes.io/version: 2.54.1
+        operator.prometheus.io/name: k8s
+        operator.prometheus.io/shard: "0"
+        prometheus: k8s
+    spec:
+      automountServiceAccountToken: true
+      containers:
+      - args:
+        - --web.console.templates=/etc/prometheus/consoles
+        - --web.console.libraries=/etc/prometheus/console_libraries
+        - --config.file=/etc/prometheus/config_out/prometheus.env.yaml
+        - --web.enable-lifecycle
+        - --web.route-prefix=/
+        - --storage.tsdb.retention.time=24h
+        - --storage.tsdb.path=/prometheus
+        - --web.config.file=/etc/prometheus/web_config/web-config.yaml
+        image: quay.io/prometheus/prometheus:v2.54.1
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 6
+          httpGet:
+            path: /-/healthy
+            port: web
+            scheme: HTTP
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 3
+        name: prometheus
+        ports:
+        - containerPort: 9090
+          name: web
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /-/ready
+            port: web
+            scheme: HTTP
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 3
+        resources:
+          requests:
+            memory: 400Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        startupProbe:
+          failureThreshold: 60
+          httpGet:
+            path: /-/ready
+            port: web
+            scheme: HTTP
+          periodSeconds: 15
+          successThreshold: 1
+          timeoutSeconds: 3
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/prometheus/config_out
+          name: config-out
+          readOnly: true
+        - mountPath: /etc/prometheus/certs
+          name: tls-assets
+          readOnly: true
+        - mountPath: /prometheus
+          name: prometheus-k8s-db
+        - mountPath: /etc/prometheus/rules/prometheus-k8s-rulefiles-0
+          name: prometheus-k8s-rulefiles-0
+        - mountPath: /etc/prometheus/web_config/web-config.yaml
+          name: web-config
+          readOnly: true
+          subPath: web-config.yaml
+      - args:
+        - --listen-address=:8080
+        - --reload-url=http://localhost:9090/-/reload
+        - --config-file=/etc/prometheus/config/prometheus.yaml.gz
+        - --config-envsubst-file=/etc/prometheus/config_out/prometheus.env.yaml
+        - --watched-dir=/etc/prometheus/rules/prometheus-k8s-rulefiles-0
+        command:
+        - /bin/prometheus-config-reloader
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: SHARD
+          value: "0"
+        image: quay.io/prometheus-operator/prometheus-config-reloader:v0.76.2
+        imagePullPolicy: IfNotPresent
+        name: config-reloader
+        ports:
+        - containerPort: 8080
+          name: reloader-web
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 10m
+            memory: 50Mi
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/prometheus/config
+          name: config
+        - mountPath: /etc/prometheus/config_out
+          name: config-out
+        - mountPath: /etc/prometheus/rules/prometheus-k8s-rulefiles-0
+          name: prometheus-k8s-rulefiles-0
+      dnsPolicy: ClusterFirst
+      initContainers:
+      - args:
+        - --watch-interval=0
+        - --listen-address=:8081
+        - --config-file=/etc/prometheus/config/prometheus.yaml.gz
+        - --config-envsubst-file=/etc/prometheus/config_out/prometheus.env.yaml
+        - --watched-dir=/etc/prometheus/rules/prometheus-k8s-rulefiles-0
+        command:
+        - /bin/prometheus-config-reloader
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: SHARD
+          value: "0"
+        image: quay.io/prometheus-operator/prometheus-config-reloader:v0.76.2
+        imagePullPolicy: IfNotPresent
+        name: init-config-reloader
+        ports:
+        - containerPort: 8081
+          name: reloader-web
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 10m
+            memory: 50Mi
+          requests:
+            cpu: 10m
+            memory: 50Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/prometheus/config
+          name: config
+        - mountPath: /etc/prometheus/config_out
+          name: config-out
+        - mountPath: /etc/prometheus/rules/prometheus-k8s-rulefiles-0
+          name: prometheus-k8s-rulefiles-0
+      nodeSelector:
+        kubernetes.io/os: linux
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 1000
+      serviceAccount: prometheus-k8s
+      serviceAccountName: prometheus-k8s
+      shareProcessNamespace: false
+      terminationGracePeriodSeconds: 600
+      volumes:
+      - name: config
+        secret:
+          defaultMode: 420
+          secretName: prometheus-k8s
+      - name: tls-assets
+        projected:
+          defaultMode: 420
+          sources:
+          - secret:
+              name: prometheus-k8s-tls-assets-0
+      - emptyDir:
+          medium: Memory
+        name: config-out
+      - configMap:
+          defaultMode: 420
+          name: prometheus-k8s-rulefiles-0
+        name: prometheus-k8s-rulefiles-0
+      - name: web-config
+        secret:
+          defaultMode: 420
+          secretName: prometheus-k8s-web-config
+      - emptyDir: {}
+        name: prometheus-k8s-db
+  updateStrategy:
+    type: RollingUpdate
+status:
+  availableReplicas: 2
+  collisionCount: 0
+  currentReplicas: 2
+  currentRevision: prometheus-k8s-5dc5d5697
+  observedGeneration: 1
+  readyReplicas: 2
+  replicas: 2
+  updateRevision: prometheus-k8s-5dc5d5697
+  updatedReplicas: 2
 ```
 
