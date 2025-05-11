@@ -655,7 +655,9 @@ groups:
 
 ##  kube-prometheus 部署配置分析
 
-### 1. 配置
+### 1. prometheus-server 部署配置
+
+#### 1.1 depolyment.yaml
 
 ```yaml
 apiVersion: apps/v1
@@ -929,5 +931,31 @@ status:
   replicas: 2
   updateRevision: prometheus-k8s-5dc5d5697
   updatedReplicas: 2
+```
+
+#### 1.2 prometheus-server 相关的其他 yaml 文件
+
+```shell
+# 服务账号、集群权限及+角色绑定相关配置文件
+prometheus-serviceAccount.yaml
+prometheus-clusterRole.yaml
+prometheus-clusterRoleBinding.yaml
+prometheus-roleConfig.yaml
+prometheus-roleBindingConfig.yaml
+prometheus-roleSpecificNamespaces.yaml
+prometheus-roleBindingSpecificNamespaces.yaml
+# prometheus-server 部署配置文件
+prometheus-prometheus.yaml
+# prometheus 相关报警规则配置文件
+prometheus-prometheusRule.yaml
+# prometheus 相关服务监视配置文件
+prometheus-serviceMonitor.yaml
+# 
+prometheus-service.yaml
+# prometheus 相关服务网络流量路由策略文件
+prometheus-networkPolicy.yaml
+# prometheus 相关 pod 可用性声明文件
+# an object to define the max disruption that can be caused to a collection of pods
+prometheus-podDisruptionBudget.yaml
 ```
 
