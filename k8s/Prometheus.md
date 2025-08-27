@@ -125,7 +125,30 @@ scrape_configs:
 
 ### 抓取 docker 相关指标
 
-#### 1. 
+#### 1. cAdvisor compose 文件
+
+```yaml
+services:
+  srv-cadvisor:
+    image: m.daocloud.io/gcr.io/cadvisor/cadvisor
+    ports:
+    - target: 8080
+      published: 8080
+      mode: host # bypass the routing mesh
+    labels:
+      prometheus-job: cadvisor
+    deploy:
+      mode: global
+    volumes:
+    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - /:/rootfs:ro
+    - /var/run:/var/run:ro
+    - /sys:/sys:ro
+    - /var/lib/docker:/var/lib/docker:ro
+    command: --docker_only
+```
+
+#### 2. 配置抓取项
 
 ```yaml
 # scrape-config.yaml  
