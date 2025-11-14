@@ -105,14 +105,14 @@ kubeadm 安装的 k8s 控制平面版本需要与 kubelet 和 kubectl 保持兼�
   ```shell
   # If the directory `/etc/apt/keyrings` does not exist, it should be created before the curl command, read the note below.
   # sudo mkdir -p -m 755 /etc/apt/keyrings
-  curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
   ```
 
 - 添加 k8s 仓库源
   
   ```shell
   # This overwrites any existing configuration in /etc/apt/sources.list.d/kubernetes.list
-  echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+  echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
   ```
 
 - 安装
@@ -164,6 +164,7 @@ kubeadm config print init-defaults > kubeadm-config.yaml
 **测试环境用到的初始化配置文件如下**
 
 ```yaml
+# kubeadm-config.yaml
 apiVersion: kubeadm.k8s.io/v1beta4
 kind: InitConfiguration
 localAPIEndpoint:
@@ -175,7 +176,7 @@ nodeRegistration:
   imagePullSerial: true
 ---
 apiVersion: kubeadm.k8s.io/v1beta4
-controlPlaneEndpoint: "192.168.0.110:6443"
+controlPlaneEndpoint: "192.168.0.110:6443" # 指定此项以启用高可用集群
 clusterName: cluster0
 imageRepository: registry.cn-hangzhou.aliyuncs.com/google_containers
 kind: ClusterConfiguration
@@ -189,6 +190,18 @@ networking:
 
 ```shell
 kubeadm init --config  kubeadm-config.yaml --upload-certs  # 执行命令初始化 k8s 控制平面
+```
+
+#### 1.1 安装后设置启动文件
+
+```she
+# regular users
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+# root users
+export KUBECONFIG=/etc/kubernetes/admin.conf
 ```
 
 ### 2. 安装 Pod 网络插件
@@ -223,7 +236,7 @@ kubeadm init --config  kubeadm-config.yaml --upload-certs  # 执行命令初始�
 - 应用配置文件部署 calico
 
   ```shell
-  wget https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+  curl https://raw.githubusercontent.com/projectcalico/calico/v3.31.0/manifests/calico.yaml -O
   kubectl create -f calico.yaml
   ```
 
@@ -633,7 +646,7 @@ kubectl top pod
 kubectl top pod
 ```
 
-##### 4.安装 metrics-server
+##### 4. 安装 metrics-server
 
 ```shell
 # 获取 yaml 文件
