@@ -33,5 +33,8 @@ git remote rm upstream
 
 # 重命名
 git remote rename <旧名称> <新名称>
+
+# 重新修改地址
+git remote set-url origin https://github.com/zhuzzzzzz/IocDock.git
 ```
 
